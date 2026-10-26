@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+*.log
+.DS_Store
+state.json
+state.tmp
+certs/
+events.db
+events.db-wal
+events.db-shm
+hooks/errors.log
+monitor.lock

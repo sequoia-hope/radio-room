@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+"""reserve — book CPU cores on this machine, wait your turn, then run.
+
+    reserve -c 8 -- cargo test --workspace
+    reserve -c 12 -l "GUI suite" -- npx playwright test tests/gui/
+    reserve --status
+
+Asks the reservation server (reserve/server.py) for N cores and waits in
+line until they are free, saying who is ahead. Once granted, it runs the
+command with its build tools told N jobs (CARGO_BUILD_JOBS, MAKEFLAGS, …)
+and, on the host, inside a systemd scope whose CPU quota is exactly N cores,
+so the job cannot take more than it booked. The cores go back when the
+command exits, or within seconds if this client is killed.
+
+The server is found from --url, then $RESERVE_URL, then `proj url reserve`.
+There is no default: with no server to ask, it fails rather than running
+unbooked. Exit status is the command's; 75 if it never got to run.
+
+Stdlib only, one file — a container fetches it from the server's /client.
+"""
+
+import argparse
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+
+CHECKIN = 3         # seconds between check-ins; the server drops us after 20
+NOT_RUN = 75        # EX_TEMPFAIL: the command never started
+
+
+def server_url(flag: str | None) -> str:
+    if flag:
+        return flag.rstrip("/")
+    if os.environ.get("RESERVE_URL"):
+        return os.environ["RESERVE_URL"].rstrip("/")
+    if shutil.which("proj"):
+        done = subprocess.run(["proj", "url", "reserve"], capture_output=True, text=True)
+        if done.returncode == 0 and done.stdout.strip():
+            return done.stdout.strip().rstrip("/")
+    # In a container: the port the server last started on, from the ~/.claude
+    # it shares with the host, at the docker host's address.
+    try:
+        port = int(json.loads(open(os.path.expanduser("~/.claude/reserve.json")).read())["port"])
+    except (OSError, ValueError, KeyError):
+        port = None
+    if port and os.path.exists("/.dockerenv"):
+        return f"http://{docker_host()}:{port}"
+    sys.exit("reserve: no reservation server — pass --url, set RESERVE_URL, "
+             "or register it (`proj url reserve` found nothing)")
+
+
+def docker_host() -> str:
+    """The container's default gateway (/proc/net/route is little-endian hex)."""
+    for line in open("/proc/net/route").read().splitlines()[1:]:
+        f = line.split()
+        if f[1] == "00000000":
+            return ".".join(str(int(f[2][i:i + 2], 16)) for i in (6, 4, 2, 0))
+    sys.exit("reserve: no default route to the docker host")
+
+
+def call(base: str, path: str, body: dict | None = None, timeout: float = 5) -> dict:
+    data = json.dumps(body or {}).encode()
+    req = urllib.request.Request(base + path, data=data, method="POST",
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+
+
+def say(msg: str) -> None:
+    print(f"reserve: {msg}", file=sys.stderr, flush=True)
+
+
+def describe(jobs: list[dict]) -> str:
+    return ", ".join(f"{j['project']} {j['cores']}"
+                     + (f" ({j['label']})" if j.get("label") else "") for j in jobs) or "nobody"
+
+
+def status(base: str) -> int:
+    with urllib.request.urlopen(base + "/api/state", timeout=5) as r:
+        s = json.loads(r.read())
+    print(f"{s['booked']}/{s['capacity']} cores booked · load {s['load']:.0f} "
+          f"on {s['cores']} · pressure {s.get('pressure')}%"
+          + (" · PAUSED: nothing new starts" if s.get("paused") else ""))
+    now = s["now"]
+    for e in s["entries"]:
+        since = e["granted"] if e["state"] == "granted" else e["requested"]
+        mins = int((now - since) // 60)
+        print(f"  {'running' if e['state'] == 'granted' else 'waiting':7} "
+              f"{e['cores']:3} cores  {e['project']:20} {mins:4}m  {e['label'] or e['command']}")
+    print("using now (booked or not):")
+    for p in s["usage"]["projects"][:10]:
+        print(f"  {p['cores']:5.1f}  {p['project']}")
+    return 0
+
+
+def tmux_session() -> str:
+    """The tmux session this runs in, so the server can tell which agent
+    asked when the cwd is outside every project."""
+    if not os.environ.get("TMUX") or not shutil.which("tmux"):
+        return ""
+    done = subprocess.run(["tmux", "display-message", "-p", "#S"],
+                          capture_output=True, text=True)
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+def job_env(cores: int) -> dict:
+    """Tell the usual build and test tools how many jobs they have."""
+    n = str(cores)
+    env = dict(os.environ)
+    env.update(RESERVED_CORES=n, CARGO_BUILD_JOBS=n, MAKEFLAGS=f"-j{n}",
+               CMAKE_BUILD_PARALLEL_LEVEL=n, NINJAFLAGS=f"-j{n}",
+               RUST_TEST_THREADS=n, NEXTEST_TEST_THREADS=n, RAYON_NUM_THREADS=n,
+               OMP_NUM_THREADS=n, PYTEST_XDIST_AUTO_NUM_WORKERS=n)
+    return env
+
+
+def scoped(argv: list[str], cores: int, eid: str) -> list[str]:
+    """On the host, run inside a systemd user scope capped at the booked
+    cores. Inside a container there is no user manager to ask; the job
+    counts in the environment are all it gets."""
+    if not shutil.which("systemd-run"):
+        return argv
+    probe = subprocess.run(["systemctl", "--user", "is-system-running"],
+                           capture_output=True, text=True)
+    if probe.stdout.strip() not in ("running", "degraded"):
+        return argv
+    return ["systemd-run", "--user", "--scope", "--quiet", "--collect",
+            f"--unit=reserve-{eid}", f"--property=CPUQuota={cores * 100}%", "--", *argv]
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        usage="reserve [-c CORES] [-l LABEL] [-p PROJECT] -- COMMAND ...  |  reserve --status")
+    ap.add_argument("-c", "--cores", type=int, default=4, help="cores to book (default 4)")
+    ap.add_argument("-l", "--label", default="", help="what this is, for the queue page")
+    ap.add_argument("-p", "--project", default=os.environ.get("RESERVE_PROJECT"),
+                    help="default: the registered project the cwd is in")
+    ap.add_argument("--url", default=None)
+    ap.add_argument("--status", action="store_true", help="show the book and exit")
+    ap.add_argument("command", nargs=argparse.REMAINDER)
+    args = ap.parse_args()
+    base = server_url(args.url)
+    if args.status:
+        return status(base)
+    argv = args.command[1:] if args.command[:1] == ["--"] else args.command
+    if not argv:
+        ap.error("no command to run")
+
+    ask = {"cores": args.cores, "label": args.label, "project": args.project,
+           "command": " ".join(argv), "cwd": os.getcwd(), "session": tmux_session()}
+    try:
+        e = call(base, "/api/request", ask)
+    except (urllib.error.URLError, OSError, ValueError) as err:
+        say(f"can't reach the reservation server at {base}: {err}")
+        return NOT_RUN
+    eid = e["id"]
+    ask["requested"] = e["requested"]   # a re-queue after a restart keeps our place
+    if e["cores"] < args.cores:
+        say(f"{args.cores} cores is more than can be booked; asking for {e['cores']}")
+
+    stop = threading.Event()
+
+    def leave(code=None):
+        stop.set()
+        try:
+            call(base, f"/api/release/{eid}", {"code": code}, timeout=2)
+        except Exception:  # noqa: BLE001 — the server drops us anyway
+            pass
+
+    # ── wait in line ──
+    last = None
+    try:
+        while e["state"] == "waiting":
+            line = (f"waiting for {e['cores']} cores — {e['position']} in line"
+                    + (" (the queue is paused)" if e.get("paused") else "") + "; "
+                    f"running: {describe(e['running'])}"
+                    + (f"; ahead: {describe(e['ahead'])}" if e["ahead"] else ""))
+            if line != last:
+                say(line)
+                last = line
+            time.sleep(CHECKIN)
+            try:
+                e = call(base, f"/api/checkin/{eid}")
+            except urllib.error.HTTPError as err:
+                if err.code != 404:
+                    raise
+                # The server restarted and forgot us: queue again.
+                e = call(base, "/api/request", ask)
+                eid = e["id"]
+            except (urllib.error.URLError, OSError):
+                pass   # keep our place; the server drops us only after silence
+    except KeyboardInterrupt:
+        leave()
+        return 130
+    if e["state"] == "cancelled":
+        say("the reservation was cancelled from the queue page")
+        leave()
+        return NOT_RUN
+    cores = e["cores"]
+    say(f"granted {cores} cores")
+    unit = eid    # the scope keeps this name even if a restart re-books us
+    child = None
+
+    def halt():
+        """Stopped from the queue page: TERM, then KILL if it lingers."""
+        say("stopped from the queue page")
+        child.terminate()
+        try:
+            child.wait(15)
+        except subprocess.TimeoutExpired:
+            child.kill()
+
+    # ── run, checking in ──
+    def keep():
+        nonlocal eid
+        while not stop.wait(CHECKIN):
+            try:
+                if call(base, f"/api/checkin/{eid}").get("stop") and child.poll() is None:
+                    threading.Thread(target=halt, daemon=True).start()
+            except urllib.error.HTTPError as err:
+                if err.code == 404:   # its book was lost: book what we are using
+                    try:
+                        eid = call(base, "/api/request", {**ask, "cores": cores,
+                                                          "resume": True, "unit": unit})["id"]
+                    except Exception:  # noqa: BLE001
+                        pass
+            except Exception:  # noqa: BLE001 — never stop the job over the book
+                pass
+
+    child = subprocess.Popen(scoped(argv, cores, eid), env=job_env(cores))
+    threading.Thread(target=keep, daemon=True).start()
+
+    def forward(sig, _frame):
+        child.send_signal(sig)
+
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, forward)
+    code = child.wait()
+    code = code if code >= 0 else 128 - code
+    leave(code)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

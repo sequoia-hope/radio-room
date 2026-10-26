@@ -1,0 +1,44 @@
+# Every suite on each supported Python, then the desktop window's tests on
+# the distro's own Python, which is the only one GTK's bindings load into.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tmux
+      - run: python -m pip install pytest
+      # No GTK here, so desktop/'s tests skip themselves; the next job runs them.
+      - run: python -m pytest -q
+
+  desktop:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi gir1.2-vte-2.91 gir1.2-webkit2-4.1 python3-pytest tmux xvfb
+      # Fail here rather than let every desktop test skip and call that a pass.
+      - run: >
+          xvfb-run -a /usr/bin/python3 -c 'import gi;
+          gi.require_version("Gtk", "3.0"); gi.require_version("Vte", "2.91");
+          gi.require_version("WebKit2", "4.1");
+          from gi.repository import Gtk, Vte, WebKit2'
+      - run: xvfb-run -a /usr/bin/python3 -m pytest -q desktop

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# xclip, aimed at the desktop that is running now.
+#
+# Agents live in tmux sessions that outlast a login, so the DISPLAY and
+# XAUTHORITY they were started with go stale: a new Xwayland writes a new
+# cookie file and the old one stops opening the display. Claude Code reads a
+# pasted image with `xclip -selection clipboard ...`, so a stale cookie means
+# Ctrl+V quietly pastes nothing. This takes the display and cookie from the
+# Xwayland that is running for this user, then hands over to the real xclip.
+# install.sh links it into ~/.local/bin, ahead of /usr/bin on PATH.
+set -u
+
+self="$(readlink -f "${BASH_SOURCE[0]}")"
+real=""
+for c in $(type -ap xclip); do
+  [ "$(readlink -f "$c")" = "$self" ] || { real="$c"; break; }
+done
+[ -n "$real" ] || { echo "xclip: the real xclip is not installed" >&2; exit 127; }
+
+pid="$(pgrep -u "$(id -u)" -nx Xwayland || pgrep -u "$(id -u)" -nx Xorg || true)"
+if [ -n "$pid" ]; then
+  read -ra argv < <(tr '\0' ' ' < "/proc/$pid/cmdline")
+  for ((i = 1; i < ${#argv[@]}; i++)); do
+    case "${argv[i]}" in
+      :[0-9]*) export DISPLAY="${argv[i]}" ;;
+      -auth) export XAUTHORITY="${argv[i + 1]}" ;;
+    esac
+  done
+fi
+exec "$real" "$@"

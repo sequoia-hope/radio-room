@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CPU reservations</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --card: #ffffff; --fg: #1d1d1b; --dim: #6b6b66; --line: #e2e2dd;
+    --run: #2f7d4f; --wait: #b07a12; --free: #e9e9e4; --bad: #b3372f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --card: #1f1f1d; --fg: #ecece8; --dim: #9a9a93; --line: #33332f;
+            --run: #4fb47a; --wait: #d9a23a; --free: #2c2c29; --bad: #e0675d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 15px/1.45 system-ui, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim);
+       margin: 26px 0 8px; font-weight: 600; }
+  .sub { color: var(--dim); font-size: 13px; }
+  .bar { display: flex; height: 22px; border-radius: 6px; overflow: hidden;
+         background: var(--free); margin: 14px 0 4px; }
+  .bar span { display: block; height: 100%; border-right: 2px solid var(--bg); }
+  .bar .r { background: var(--run); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+  .row { display: grid; grid-template-columns: 4.5em 1fr auto; gap: 10px; align-items: center;
+         padding: 10px 12px; border-top: 1px solid var(--line); }
+  .row:first-child { border-top: 0; }
+  .cores { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .what { min-width: 0; }
+  .what b { font-weight: 600; }
+  .what div { color: var(--dim); font-size: 13px; overflow: hidden; text-overflow: ellipsis;
+              white-space: nowrap; }
+  .run .cores { color: var(--run); }
+  .wait .cores { color: var(--wait); }
+  .empty { padding: 12px; color: var(--dim); }
+  button { font: inherit; font-size: 13px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+           background: transparent; color: var(--fg); border: 1px solid var(--line); }
+  button:hover { border-color: var(--dim); }
+  button.x { color: var(--bad); }
+  .use { display: grid; grid-template-columns: 1fr 3.5em; gap: 4px 10px; padding: 10px 12px;
+         align-items: center; }
+  .use .n { text-align: right; font-variant-numeric: tabular-nums; }
+  .use .meter { height: 6px; background: var(--free); border-radius: 3px; overflow: hidden;
+                margin-top: 3px; }
+  .use .meter span { display: block; height: 100%; background: var(--dim); }
+  .err { color: var(--bad); }
+  .ctl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  .ctl .n { font-variant-numeric: tabular-nums; min-width: 1.5em; text-align: center; }
+  .paused { color: var(--wait); font-weight: 600; }
+  .hist .cores { color: var(--dim); font-weight: 400; }
+</style>
+</head>
+<body>
+<main>
+  <h1>CPU reservations</h1>
+  <div class="sub" id="summary">loading…</div>
+  <div class="bar" id="bar"></div>
+  <div class="sub" id="barnote"></div>
+  <div class="ctl">
+    <button id="pause"></button>
+    <span class="sub">kept free</span>
+    <button onclick="keep(-1)">−</button><span class="n" id="keep"></span><button onclick="keep(1)">+</button>
+  </div>
+
+  <h2>Running</h2>
+  <div class="card" id="running"></div>
+
+  <h2>Waiting</h2>
+  <div class="card" id="waiting"></div>
+
+  <h2>Finished lately</h2>
+  <div class="card" id="history"></div>
+
+  <h2>Using the CPU now, booked or not</h2>
+  <div class="card use" id="usage"></div>
+
+  <p class="sub">Book with <code>reserve -c N -- command</code>. First come, first served;
+  nobody passes the head of the line.</p>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const ago = (t, now) => {
+  const m = Math.floor((now - t) / 60);
+  return m < 1 ? 'just now' : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+};
+
+function row(e, now, cls, buttons) {
+  const where = e.where && e.where !== 'host' ? ` · in ${esc(e.where)}` : '';
+  const since = cls === 'run' ? `running ${ago(e.granted, now)}` : `waiting ${ago(e.requested, now)}`;
+  return `<div class="row ${cls}">
+    <div class="cores">${e.cores} core${e.cores === 1 ? '' : 's'}</div>
+    <div class="what"><b>${esc(e.project)}</b> ${esc(e.label)}
+      <div title="${esc(e.command)}">${since}${where} · ${esc(e.command)}</div></div>
+    <div>${buttons}</div></div>`;
+}
+
+let last = null;
+async function post(path, body) {
+  await fetch(path, { method: 'POST', body: JSON.stringify(body || {}) });
+  refresh();
+}
+const act = (verb, id, body) => post(`api/${verb}/${id}`, body);
+const keep = (d) => post('api/settings', { keep_free: last.keep_free + d });
+function resize(id, cores) {
+  const n = parseInt(prompt('Cores for this job?', cores), 10);
+  if (n > 0) act('cores', id, { cores: n });
+}
+function stopJob(id, what) {
+  if (confirm(`Stop ${what}?\n\nIts command gets SIGTERM, then SIGKILL if it lingers.`)) act('stop', id);
+}
+const HOW = { done: 'finished', stopped: 'stopped', cancelled: 'cancelled', lapsed: 'client vanished' };
+
+async function refresh() {
+  let s;
+  try {
+    s = await (await fetch('api/state', { cache: 'no-store' })).json();
+  } catch (e) {
+    $('summary').innerHTML = '<span class="err">the reservation server is not answering</span>';
+    return;
+  }
+  last = s;
+  $('pause').textContent = s.paused ? '▶ resume granting' : '⏸ pause granting';
+  $('pause').onclick = () => post('api/settings', { paused: !s.paused });
+  $('keep').textContent = s.keep_free;
+  const run = s.entries.filter((e) => e.state === 'granted');
+  const wait = s.entries.filter((e) => e.state === 'waiting');
+  $('summary').textContent = `${s.booked} of ${s.capacity} bookable cores booked · ` +
+    `${s.cores - s.capacity} kept free · load ${s.load.toFixed(0)} on ${s.cores} cores` +
+    (s.pressure != null ? ` · CPU pressure ${s.pressure.toFixed(0)}%` : '');
+  if (s.paused) $('summary').innerHTML += ' · <span class="paused">paused: nothing new starts</span>';
+  $('bar').innerHTML = run.map((e) =>
+    `<span class="r" style="width:${100 * e.cores / s.capacity}%" title="${esc(e.project)}: ${e.cores}"></span>`).join('');
+  $('barnote').textContent = `${s.capacity - s.booked} free`;
+  $('running').innerHTML = run.length ? run.map((e) => row(e, s.now, 'run', e.stop ? 'stopping…' :
+      `<button class="x" onclick="stopJob('${e.id}', 'the ${e.cores}-core job of ${esc(e.project)}')">stop</button>`)).join('')
+    : '<div class="empty">Nothing booked.</div>';
+  $('waiting').innerHTML = wait.length ? wait.map((e, i) => row(e, s.now, 'wait',
+      (i ? `<button onclick="act('front','${e.id}')">to front</button> ` : '') +
+      `<button onclick="resize('${e.id}', ${e.cores})">cores</button> ` +
+      `<button class="x" onclick="act('cancel','${e.id}')">cancel</button>`)).join('')
+    : '<div class="empty">Nobody waiting.</div>';
+  $('history').innerHTML = s.history.length ? s.history.slice(0, 12).map((h) => {
+    const took = h.granted ? ago(h.granted, h.ended).replace('just now', '<1 min') : 'never ran';
+    const code = h.code != null && h.code !== 0 ? ` · exit ${h.code}` : '';
+    return `<div class="row hist"><div class="cores">${h.cores} core${h.cores === 1 ? '' : 's'}</div>
+      <div class="what"><b>${esc(h.project)}</b> ${esc(h.label)}
+        <div title="${esc(h.command)}">${HOW[h.how] || h.how}${code} · ${took} · ${ago(h.ended, s.now)} ago · ${esc(h.command)}</div></div>
+      <div></div></div>`;
+  }).join('') : '<div class="empty">Nothing yet.</div>';
+  const top = Math.max(1, ...s.usage.projects.map((p) => p.cores));
+  $('usage').innerHTML = s.usage.projects.length ? s.usage.projects.map((p) => `
+    <div><b>${esc(p.project)}</b> <span class="sub">${p.top.map(([c, n]) => `${esc(c)} ${n}`).join(' · ')}</span>
+      <div class="meter"><span style="width:${100 * p.cores / top}%"></span></div></div>
+    <div class="n">${p.cores.toFixed(1)}</div>`).join('')
+    : '<div class="sub">sampling…</div>';
+}
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

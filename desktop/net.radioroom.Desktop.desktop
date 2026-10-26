@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Radio Room
+Comment=Every coding agent, with real terminals
+Exec=radio-room
+Icon=net.radioroom.Desktop
+Terminal=false
+Categories=Development;
+StartupWMClass=net.radioroom.Desktop

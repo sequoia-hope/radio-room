@@ -1,0 +1,3855 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- interactive-widget=resizes-content: the soft keyboard shrinks the layout
+     viewport rather than sliding the page up, so the full-screen terminal can
+     size itself to what is left. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, interactive-widget=resizes-content">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#111417">
+<link rel="icon" href="data:,">
+<title>Radio Room</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #111417; color: #e7ecf1;
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: flex; flex-direction: column;
+    padding-top: env(safe-area-inset-top);
+  }
+  header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; background: #1b2026; border-bottom: 1px solid #2a3138;
+    position: sticky; top: 0; z-index: 5;
+  }
+  select#project {
+    flex: 1; min-width: 0; font-size: 17px; padding: 8px 10px;
+    background: #10151a; color: #e7ecf1; border: 1px solid #2a3138; border-radius: 10px;
+    appearance: none; -webkit-appearance: none;
+  }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: #555; flex: none; }
+  .dot.on { background: #3ecf6f; box-shadow: 0 0 6px #3ecf6f88; }
+  button { font: inherit; color: inherit; border: none; cursor: pointer; }
+  .icon {
+    background: #10151a; border: 1px solid #2a3138; border-radius: 10px;
+    min-width: 42px; min-height: 42px; font-size: 18px; flex: none;
+  }
+  #controls {
+    display: flex; align-items: center; gap: 10px; padding: 6px 12px;
+    background: #151a1f; border-bottom: 1px solid #2a3138;
+  }
+  #musicBtn {
+    background: #10151a; border: 1px solid #2a3138; border-radius: 8px;
+    min-width: 40px; min-height: 32px; font-size: 13px; color: #9fb0c0; flex: none;
+  }
+  #musicBtn.on { color: #7fd3ae; border-color: #2d5c4b; }
+  #ttsSpeed {
+    display: flex; margin-left: auto; flex: none; overflow: hidden;
+    background: #10151a; border: 1px solid #2a3138; border-radius: 8px;
+  }
+  #ttsSpeed button {
+    padding: 0 10px; min-height: 30px; font-size: 12px;
+    background: transparent; color: #7b8894;
+  }
+  #ttsSpeed button.on { background: #2a5db0; color: #fff; }
+  /* Same look as the speed buttons, minus the push to the right. */
+  #listenPause {
+    display: flex; align-items: center; flex: none; overflow: hidden;
+    background: #10151a; border: 1px solid #2a3138; border-radius: 8px;
+  }
+  #listenPause span { padding: 0 4px 0 9px; font-size: 12px; color: #56616c; }
+  #listenPause button {
+    padding: 0 9px; min-height: 30px; font-size: 12px;
+    background: transparent; color: #7b8894;
+  }
+  #listenPause button.on { background: #2a5db0; color: #fff; }
+  #musicLabel {
+    flex: 1; min-width: 0; font-size: 12px; color: #7b8894; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* Opens the full-screen live terminal on the agent being talked to. */
+  button#termRow {
+    display: block; width: 100%; text-align: left; flex: none;
+    background: #0c0f12; border-bottom: 1px solid #2a3138;
+    padding: 9px 14px; color: #8fc7ff; font-size: 14px;
+  }
+  main.chat { flex: 1; overflow-y: auto; padding: 12px 12px 6px; -webkit-overflow-scrolling: touch;
+              min-height: 0; }
+  /* One column on a phone, three on a desktop. Narrow, the view switch decides
+     what you see; wide, everything is on screen at once and it decides only
+     which column the mic is talking to. */
+  #cols { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; flex: 1; }
+  .paneHead { display: none; }
+  #paneWeb { display: none; }
+  body.viewProjects #paneProject, body:not(.viewProjects) #paneOperator { display: none; }
+
+
+  .msg { max-width: 88%; margin: 0 0 10px; padding: 10px 13px; border-radius: 16px;
+         overflow-wrap: break-word; position: relative; }
+  .msg.user    { margin-left: auto; background: #2a5db0; border-bottom-right-radius: 5px; }
+  .msg.sent    { margin-left: auto; background: #7a4a12; border-bottom-right-radius: 5px; }
+  .msg.advisor { margin-right: auto; background: #21272e; border-bottom-left-radius: 5px; }
+  .msg.summary { margin-right: auto; background: #17302a; border: 1px solid #2d5c4b;
+                 border-bottom-left-radius: 5px; }
+  .msg.summary .tag { color: #7fd3ae; opacity: 1; }
+  .msg.err     { margin-right: auto; background: #4a1f24; color: #ffb9b9; }
+  .msg .tag { display: block; font-size: 11px; opacity: .65; margin-bottom: 3px; }
+  .msg pre.code, .amsg pre.code {
+    background: #0c0f12; border: 1px solid #2a3138; border-radius: 8px;
+    padding: 8px; margin: 6px 0; overflow-x: auto;
+    font: 12px/1.4 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre;
+  }
+  .msg code, .amsg code { background: #0c0f12; border-radius: 4px; padding: 1px 4px;
+              font: 13px ui-monospace, Menlo, monospace; }
+  .msg b.h, .amsg b.h { display: block; margin: 6px 0 2px; }
+  .msg .li, .amsg .li { display: block; padding-left: 6px; }
+  .bubbleBtns { display: flex; gap: 8px; margin-top: 8px; }
+  .bubbleBtns button {
+    padding: 7px 10px; font-size: 13px; background: #10151a;
+    border: 1px solid #3a4450; border-radius: 8px;
+  }
+  .useBtn { color: #ffb464; }
+  .sayBtn { color: #8fc7ff; }
+  .pending { opacity: .7; }
+  .pending::after { content: ""; animation: dots 1.2s steps(4) infinite; }
+  @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+  footer {
+    background: #1b2026; border-top: 1px solid #2a3138;
+    padding: 8px 10px 8px;
+  }
+  /* ---- the tab bar: Agents · Projects · Tickets · Talk ---- */
+  nav#tabs {
+    display: flex; background: #151a1f; border-top: 1px solid #2a3138;
+    padding: 0 4px env(safe-area-inset-bottom); flex: none;
+  }
+  nav#tabs button {
+    flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px;
+    padding: 6px 0 7px; font-size: 11px; color: #7b8894; background: transparent;
+    position: relative; min-height: 50px;
+  }
+  nav#tabs button .ti { font-size: 18px; line-height: 1.2; }
+  nav#tabs button.on { color: #8fc7ff; }
+  nav#tabs button[hidden] { display: none; }
+  .tbadge {
+    position: absolute; top: 4px; left: calc(50% + 8px); min-width: 17px; height: 17px;
+    border-radius: 9px; background: #ffb464; color: #1b2026; font-size: 11px;
+    font-weight: 700; line-height: 17px; padding: 0 4px;
+  }
+  .tbadge[hidden] { display: none; }
+  /* Who the composer is wired to, right above the composer. This is the one
+     piece of state you must not have to hunt for: on a wide screen the focused
+     column's header is a long way from the mic, and hands-free you aren't
+     looking at either. */
+  #statusRow { display: flex; align-items: center; gap: 8px; padding: 0 2px 8px; }
+  #targetSeg { margin-left: 0; flex: none; max-width: 62%; }
+  #targetSeg button {
+    display: flex; align-items: center; gap: 6px; padding: 7px 10px;
+    font-size: 13px; min-height: 34px; min-width: 0;
+  }
+  #targetSeg button.on { background: #2a5db0; color: #fff; }
+  #targetSeg .dot { width: 8px; height: 8px; }
+  #targetProjectName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  body.noOperator #targetSeg { display: none; }
+  /* Which of the project's agents — beside the conversation switch, for the
+     same reason: it decides where a send lands. Only there when the project
+     has a second agent to choose. */
+  #agentSeg { margin-left: 0; flex: none; }
+  #agentSeg[hidden] { display: none; }
+  #agentSeg button {
+    display: flex; align-items: center; gap: 6px; padding: 7px 10px;
+    font-size: 13px; min-height: 34px;
+  }
+  #agentSeg button.on { background: #6a3fb0; color: #fff; }
+  #agentSeg .dot { width: 8px; height: 8px; }
+  body.viewProjects #agentSeg { display: none; }
+  .achip {
+    font-size: 10px; padding: 1px 6px; border-radius: 6px; color: #7b8894;
+    background: #10151a; border: 1px solid #2a3138;
+  }
+  .achip.on { color: #7fd3ae; border-color: #2d5c4b; }
+  #voiceState {
+    font-size: 13px; color: #9fb0c0; display: none; flex: 1; min-width: 0;
+    align-items: center; gap: 6px;
+  }
+  #voiceState.show { display: flex; }
+  #voiceState .pulse { width: 9px; height: 9px; border-radius: 50%; background: #e0533f;
+                       animation: pulse 1.1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+  .row { display: flex; gap: 8px; align-items: flex-end; }
+  .row.quick { margin-bottom: 8px; align-items: center; overflow-x: auto;
+               -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .row.quick::-webkit-scrollbar { display: none; }
+  .quick button.qa {
+    background: #10151a; border: 1px solid #2a3138; border-radius: 10px;
+    padding: 9px 12px; font-size: 14px; min-height: 42px; white-space: nowrap; flex: none;
+  }
+  .quick button.qa.on { background: #245036; border-color: #3ecf6f88; color: #d7ffe6; }
+  .seg { margin-left: auto; display: flex; background: #10151a;
+         border: 1px solid #2a3138; border-radius: 10px; overflow: hidden; flex: none; }
+  .seg button { padding: 9px 12px; font-size: 14px; background: transparent; color: #8b98a5; min-height: 42px; }
+  .seg button.on { color: #fff; }
+  .seg button#destAdvisor.on { background: #2a5db0; }
+  .seg button#destProject.on { background: #b06a1c; }
+  button#mic {
+    min-width: 48px; min-height: 44px; border-radius: 12px; font-size: 20px;
+    background: #10151a; border: 1px solid #2a3138; flex: none;
+  }
+  button#mic.listening { background: #a33327; border-color: #e0533f;
+                         animation: pulse 1.1s ease-in-out infinite; }
+  textarea#input {
+    flex: 1; min-height: 44px; max-height: 150px; resize: none; min-width: 0;
+    background: #10151a; color: #e7ecf1; border: 1px solid #2a3138;
+    border-radius: 12px; padding: 11px 12px; font: 16px/1.4 inherit;
+  }
+  body.destProject textarea#input { border-color: #b06a1c; }
+  button#send {
+    min-width: 70px; min-height: 44px; border-radius: 12px; font-size: 15px;
+    font-weight: 600; background: #2a5db0; color: #fff; flex: none;
+  }
+  body.destProject button#send { background: #b06a1c; }
+  button:disabled { opacity: .45; }
+  /* ---- multi-project view ---- */
+  #viewTitle { flex: 1; font-size: 17px; font-weight: 600; }
+  body.viewProjects #project, body.viewProjects #dot,
+  body.viewProjects #termRow,
+  body.viewProjects #destSeg { display: none; }
+  body.viewProject #viewTitle, body:not(.viewProjects) #projects { display: none; }
+  #projects {
+    background: #0c0f12; border-bottom: 1px solid #2a3138;
+    max-height: 46vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  }
+  #projectsBar {
+    display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+    font-size: 12px; color: #7b8894; position: sticky; top: 0; background: #0c0f12;
+    border-bottom: 1px solid #1c2228;
+  }
+  #projectsBar .grow { flex: 1; }
+  /* On a phone the roster folds to its one-line count so the operator's reply
+     gets the screen; tap the bar to unfold it. */
+  #projectsFold { display: none; }
+  #projectsPinned { display: none; }
+  @media (max-width: 1099.98px) {
+    #projects { flex: none; }
+    #projects.open { max-height: 40vh; display: flex; flex-direction: column; }
+    #projects.open > * { flex: none; }
+    #projectsBar { order: -1; }
+    #projectsUsage { order: 1; }
+    #projectsFold { display: inline; color: #9fb0c0; font-size: 11px; margin-right: 2px; }
+    #projectsBar { cursor: pointer; user-select: none; -webkit-user-select: none; }
+    #projects:not(.open) #projectsUsage, #projects:not(.open) #projectCards,
+    #projects:not(.open) #projectsBar button { display: none; }
+    #projects:not(.open) #projectsBar { border-bottom: 0; }
+    #projects.open #projectsFold { transform: rotate(90deg); display: inline-block; }
+    /* Pinned projects as one row of chips, kept when the roster is folded. */
+    #projectsPinned:not(:empty) {
+      display: flex; gap: 6px; order: -1; padding: 0 12px 7px; overflow-x: auto;
+      scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    }
+    #projectsPinned::-webkit-scrollbar { display: none; }
+    #projectsPinned button {
+      flex: none; display: flex; align-items: center; gap: 6px; white-space: nowrap;
+      background: #10151a; border: 1px solid #2a3138; border-radius: 14px;
+      color: #c9d4dd; font-size: 13px; padding: 4px 10px; min-height: 30px;
+    }
+    #projectsPinned .dot { width: 8px; height: 8px; }
+    #projects:not(.open) #projectsPinned { border-bottom: 1px solid #1c2228; }
+  }
+  #projectsBar button {
+    background: #10151a; border: 1px solid #2a3138; border-radius: 8px;
+    color: #9fb0c0; font-size: 12px; padding: 5px 10px; min-height: 30px;
+  }
+  .pcard {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+    border-bottom: 1px solid #171d23;
+  }
+  .pcard.sel { background: #121a22; }
+  .psel {
+    width: 26px; height: 26px; flex: none; border-radius: 7px; font-size: 14px;
+    background: #10151a; border: 1px solid #2a3138; color: transparent;
+    line-height: 1;
+  }
+  .pcard.sel .psel { background: #2a5db0; border-color: #2a5db0; color: #fff; }
+  .pmain { flex: 1; min-width: 0; }
+  .pname { font-size: 15px; display: flex; align-items: center; gap: 7px; }
+  .pmeta {
+    font-size: 11px; color: #7b8894; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .pmeta.busy { color: #ffb464; }
+  .pdive {
+    flex: none; background: #10151a; border: 1px solid #3a4450; border-radius: 9px;
+    padding: 8px 11px; font-size: 13px; color: #8fc7ff; min-height: 38px;
+  }
+  .msg.summary .tag.proj { color: #ffb464; }
+  /* ---- selected-project tiles (second column) ---- */
+  #tiles {
+    display: none; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    gap: 7px; padding: 8px 10px; background: #0c0f12;
+    border-bottom: 1px solid #2a3138; max-height: 32vh; overflow-y: auto;
+  }
+  .tile {
+    text-align: left; background: #10151a; border: 1px solid #2a3138;
+    border-radius: 10px; padding: 8px 9px; min-height: 52px;
+  }
+  .tile.on { border-color: #2a5db0; background: #16202e; }
+  .tile .tname {
+    font-size: 13px; display: flex; align-items: center; gap: 6px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tile .tmeta { font-size: 10px; color: #7b8894; margin-top: 3px; }
+  .tile .tmeta.busy { color: #ffb464; }
+  #tilesEmpty { grid-column: 1 / -1; font-size: 12px; color: #7b8894; padding: 4px 2px; }
+  /* ---- third column: the project's own web app ---- */
+  #webBody { flex: 1; min-height: 0; position: relative; background: #0c0f12; }
+  #webFrame { width: 100%; height: 100%; border: 0; display: none; background: #fff; }
+  #webFrame.show { display: block; }
+  #webNote {
+    position: absolute; inset: 0; overflow-y: auto; padding: 18px;
+    font-size: 13px; color: #9fb0c0; line-height: 1.6;
+  }
+  #webNote code { background: #10151a; border-radius: 4px; padding: 1px 5px;
+                  font: 12px ui-monospace, Menlo, monospace; }
+  #webNote a { color: #8fc7ff; }
+  #webTabs { display: flex; gap: 4px; }
+  #webTabs button {
+    background: #10151a; border: 1px solid #2a3138; border-radius: 7px;
+    color: #9fb0c0; font-size: 11px; padding: 4px 7px; min-height: 26px;
+  }
+  #webTabs button.on { background: #2a5db0; border-color: #2a5db0; color: #fff; }
+  /* ---- the list views: Agents, Projects, Tickets ---- */
+  .listview {
+    display: none; flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 4px 12px 16px;
+  }
+  body.viewHome #home, body.viewRepos #repos, body.viewTickets #tickets { display: block; }
+  /* No composer, chat or project picker on a list; those are Talk's. */
+  body.viewList #cols, body.viewList footer, body.viewList #project, body.viewList #dot,
+  body.viewList #newchat, body.viewList #controls { display: none; }
+  /* Without the voice feature there is no Talk at all. */
+  body.noVoice #tabTalk, body.noVoice #settingsBtn, body.noVoice #controls,
+  body.noVoice #newchat, body.noVoice .needsVoice { display: none; }
+  body.noJira #tabTickets { display: none; }
+  #homeInner, #reposInner, #ticketsInner { max-width: 1100px; margin: 0 auto; }
+  .hsec {
+    font-size: 12px; color: #7b8894; text-transform: uppercase; letter-spacing: .04em;
+    margin: 12px 2px 6px; user-select: none; -webkit-user-select: none;
+  }
+  details > summary.hsec { cursor: pointer; }
+  .hnote { font-size: 13px; color: #7b8894; padding: 2px 2px 4px; }
+  /* The CPU reservation queue (reserve/), under the Agents view. */
+  .cpu { background: #1b2026; border: 1px solid #2a3138; border-radius: 12px; padding: 8px 12px;
+         margin-bottom: 4px; }
+  .cpu > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px;
+                   font-size: 13px; color: #cfd8e1; }
+  .cpu > summary::-webkit-details-marker { display: none; }
+  .cpu .cbar { flex: 1; display: flex; height: 8px; border-radius: 4px; overflow: hidden;
+               background: #2a3138; min-width: 60px; }
+  .cpu .cbar span { background: #3ecf6f; border-right: 2px solid #1b2026; }
+  .cpu .cbar span.stop { background: #e0533f; }
+  .cpu .cnum { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .cpu .cwait { color: #ffb464; white-space: nowrap; }
+  .cpu .cpaused { color: #ffb464; font-weight: 600; }
+  .cpu .ctl { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 10px 0 2px; }
+  .cpu .ctl .n { min-width: 1.6em; text-align: center; font-variant-numeric: tabular-nums; }
+  .cpu .csec { font-size: 10px; color: #7b8894; text-transform: uppercase; letter-spacing: .04em;
+               margin: 10px 0 2px; }
+  .cpu .crow { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; padding: 6px 0;
+               border-top: 1px solid #2a3138; font-size: 13px; }
+  .cpu .crow:first-of-type { border-top: 0; }
+  .cpu .ccores { width: 4.6em; flex: none; font-weight: 600; font-variant-numeric: tabular-nums;
+                 white-space: nowrap; }
+  .cpu .run .ccores { color: #3ecf6f; } .cpu .wait .ccores { color: #ffb464; }
+  .cpu .hist .ccores { color: #7b8894; font-weight: 400; }
+  /* On a phone a waiter's buttons wrap under it rather than squeeze it. */
+  .cpu .cwhat { flex: 1 1 200px; min-width: 0; }
+  .cpu .cbtns { display: flex; gap: 6px; margin-left: auto; }
+  .cpu .cwhat div { color: #7b8894; font-size: 12px; overflow: hidden; text-overflow: ellipsis;
+                    white-space: nowrap; }
+  .cpu button { padding: 5px 9px; min-height: 32px; font-size: 12px; color: #cfd8e1; flex: none;
+                background: #10151a; border: 1px solid #3a4450; border-radius: 8px; }
+  .cpu button.x { color: #ffb9b9; }
+  .ameta .cq { color: #ffb464; } .ameta .ch { color: #3ecf6f; }
+  .hgrid {
+    display: grid; gap: 8px; align-items: start;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  }
+  .acard {
+    background: #1b2026; border: 1px solid #2a3138; border-left: 4px solid #3a4450;
+    border-radius: 12px; padding: 10px 12px; min-width: 0;
+  }
+  .acard.st-needs_input { border-left-color: #ffb464; }
+  .acard.st-completed { border-left-color: #3ecf6f; }
+  .acard.st-error { border-left-color: #e0533f; }
+  .acard.st-new { border-left-color: #b07fe0; }
+  .acard.st-working, .acard.st-starting { border-left-color: #2a5db0; }
+  .ahead { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .apill {
+    font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; flex: none;
+    background: #10151a; color: #9fb0c0; white-space: nowrap;
+  }
+  .st-needs_input .apill { background: #4a3315; color: #ffd29a; }
+  .st-completed .apill { background: #17302a; color: #9fe8c4; }
+  .st-error .apill { background: #4a1f24; color: #ffb9b9; }
+  .st-new .apill { background: #2e2140; color: #d9bff5; }
+  .st-working .apill, .st-starting .apill { background: #16263f; color: #a9cdf5; }
+  .st-working .apill::before {
+    content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor; margin-right: 5px; vertical-align: 1px;
+    animation: pulse 1.1s ease-in-out infinite;
+  }
+  .aname {
+    font-size: 15px; font-weight: 600; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .atime { margin-left: auto; font-size: 12px; color: #7b8894; flex: none; }
+  .ameta { font-size: 11px; color: #7b8894; margin-top: 3px; }
+  .asum { font-size: 14px; margin-top: 6px; overflow-wrap: anywhere; }
+  .asum.old { color: #9fb0c0; }
+  .alabel {
+    display: block; font-size: 10px; color: #7b8894; margin-bottom: 1px;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .ahint { font-size: 12px; color: #c9a0ff; margin-top: 4px; }
+  .abtns { display: flex; gap: 6px; margin-top: 9px; flex-wrap: wrap; }
+  .abtns button, .abtns a {
+    padding: 7px 11px; min-height: 36px; font-size: 13px; color: #cfd8e1;
+    background: #10151a; border: 1px solid #3a4450; border-radius: 9px;
+  }
+  .abtns a { color: #8fc7ff; text-decoration: none; display: inline-flex; align-items: center;
+             box-sizing: border-box; }
+  .abtns button.voice { color: #8fc7ff; }
+  .abtns button.dismiss { color: #9fe8c4; }
+  .abtns button.pin { padding-left: 8px; padding-right: 8px; filter: grayscale(1); opacity: .5; }
+  .abtns button.pin.on { filter: none; opacity: 1; }
+  .rpin { background: none; border: 0; padding: 4px 6px; font-size: 14px; cursor: pointer;
+          filter: grayscale(1); opacity: .35; }
+  .rpin.on { filter: none; opacity: 1; }
+  /* Idle agents: one row each, so a long tail of them stays a short list. */
+  .acard.quiet { padding: 7px 10px 7px 12px; }
+  .quiet .ahead .abtns { margin: 0 0 0 auto; flex-wrap: nowrap; flex: none; }
+  .ahead .achip, .abtns button, .abtns a { flex: none; white-space: nowrap; }
+  .quiet .abtns button, .quiet .abtns a { min-height: 32px; padding: 5px 9px; }
+  .quiet .asum { font-size: 12px; margin-top: 3px; color: #9fb0c0;
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .quiet .asum .alabel { display: inline; margin-right: 6px; }
+  .adetail { margin-top: 9px; border-top: 1px solid #2a3138; padding-top: 8px; }
+  .adetail[hidden] { display: none; }
+  .amsg {
+    font-size: 14px; max-height: 55vh; overflow-y: auto; overflow-wrap: anywhere;
+    -webkit-overflow-scrolling: touch;
+  }
+  .apath { font: 11px/1.4 ui-monospace, Menlo, monospace; color: #9fb0c0;
+           overflow-wrap: anywhere; margin-top: 8px; }
+  .adetail pre.term {
+    margin: 8px 0 0; padding: 8px; max-height: 45vh; overflow: auto;
+    background: #0c0f12; border: 1px solid #2a3138; border-radius: 8px;
+    font: 10px/1.35 ui-monospace, "SF Mono", Menlo, monospace; color: #c9d4dd;
+    white-space: pre; -webkit-overflow-scrolling: touch;
+  }
+  /* ---- Projects: grouped by repository ---- */
+  #repoFilterWrap { position: relative; margin: 8px 0 2px; }
+  #repoFilter {
+    width: 100%; font-size: 16px; padding: 9px 40px 9px 12px;
+    background: #10151a; color: #e7ecf1; border: 1px solid #2a3138; border-radius: 10px;
+  }
+  #repoFilter::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
+  #repoFilterClear {
+    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px;
+    background: none; color: #7b8894; font-size: 20px; line-height: 1; cursor: pointer;
+  }
+  #repoFilterClear:hover { color: #e7ecf1; }
+  #repoFilterClear[hidden] { display: none; }
+  .rsec { display: flex; align-items: baseline; gap: 8px; }
+  .rsec .rpath { font-size: 11px; color: #56616c; text-transform: none; letter-spacing: 0;
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rcard { border-left-color: #2a3138; }
+  .rcard.live { border-left-color: #3ecf6f; }
+  .rgit { font-size: 12px; color: #9fb0c0; margin-top: 3px; overflow-wrap: anywhere; }
+  .rgit .wt { color: #c9a0ff; }
+  .rdesc { font-size: 12px; color: #7b8894; margin-top: 2px;
+           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tchips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+  a.tchip, span.tchip {
+    font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px;
+    background: #1d2433; border: 1px solid #2f3a52; color: #a9c4f5; text-decoration: none;
+  }
+  .ragents { display: grid; gap: 6px; margin-top: 8px; }
+  .ragent { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .ragent .rname { font-size: 13px; min-width: 64px; display: flex; align-items: center; gap: 6px; }
+  .ragent .rname .dot { width: 8px; height: 8px; }
+  .ragent button, .rweb {
+    padding: 5px 10px; min-height: 32px; font-size: 13px; color: #cfd8e1;
+    background: #10151a; border: 1px solid #3a4450; border-radius: 9px; text-decoration: none;
+    display: inline-flex; align-items: center;
+  }
+  .ragent button.start { color: #9fe8c4; }
+  .ragent button.stop { color: #ffb9b9; margin-left: auto; }
+  .rweb { margin-left: auto; color: #8fc7ff; }
+  /* ---- Projects as an accordion, each with a live terminal ---- */
+  .rlist { display: grid; gap: 6px; }
+  .rcard { padding: 0; }
+  .rtop { display: flex; align-items: center; gap: 8px; padding: 10px 12px 4px; cursor: pointer;
+          user-select: none; -webkit-user-select: none; }
+  .rtop .aname { flex: 1; }
+  .rtop .chev { color: #7b8894; font-size: 13px; width: 14px; text-align: center; flex: none; }
+  .rcard:not(.open) .rtop { padding-bottom: 10px; }
+  .rsub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 0 12px 9px 31px;
+          margin-top: -4px; }
+  .rsub .rgit { margin: 0; }
+  .rcard.open .rdesc, .rcard.open > .ameta { padding: 0 12px; }
+  .rcard.open { border-left-color: #8fc7ff; }
+  .rbar { display: flex; align-items: center; gap: 6px; padding: 8px 12px 8px; flex-wrap: wrap; }
+  .rbar .grow { flex: 1; }
+  .aseg { margin-left: 0; }
+  /* In a card the toggle has the row to itself; the actions sit under it,
+     Stop off to the right where it isn't hit by accident. */
+  .rbar .aseg { flex: 0 0 100%; }
+  .rbar .aseg button { flex: 1; justify-content: center; }
+  .rbar .grow { display: none; }
+  .rbar .ract.stop { margin-left: auto; }
+  .aseg button { display: flex; align-items: center; gap: 6px; padding: 6px 11px; min-height: 34px; font-size: 13px; }
+  .aseg button.on { background: #6a3fb0; color: #fff; }
+  .aseg .dot { width: 8px; height: 8px; }
+  .ract { padding: 6px 11px; min-height: 34px; font-size: 13px; color: #cfd8e1;
+          background: #10151a; border: 1px solid #3a4450; border-radius: 9px; }
+  .ract.start { color: #9fe8c4; }
+  .ract.stop { color: #ffb9b9; }
+  .ract.term { color: #8fc7ff; }
+  .rnote { font-size: 13px; color: #7b8894; padding: 0 12px 10px; }
+  /* ---- the full-screen terminal ---- */
+  #termView {
+    position: fixed; left: 0; right: 0; top: 0; height: 100dvh; z-index: 25;
+    background: #0b0e14; display: flex; flex-direction: column;
+    padding-top: env(safe-area-inset-top);
+  }
+  #termView[hidden] { display: none; }
+  #termBar {
+    display: flex; align-items: center; gap: 8px; padding: 5px 8px; flex: none;
+    background: #151a1f; border-bottom: 1px solid #2a3138;
+  }
+  #termClose { min-width: 40px; min-height: 36px; font-size: 24px; line-height: 1;
+               background: #10151a; border: 1px solid #2a3138; border-radius: 9px; }
+  #termTitle { flex: 1; min-width: 0; font-weight: 600; font-size: 15px;
+               overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #termHost { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  #termHost .tnote { margin: auto; text-align: center; color: #9fb0c0; font-size: 14px; }
+  #termHost .tnote button { margin-top: 10px; }
+  .lterm { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .lscreen { flex: 1; min-height: 0; padding: 3px 0 0 3px; touch-action: none; }
+  .lkeys { padding-bottom: calc(5px + env(safe-area-inset-bottom)) !important; }
+  .lnote { position: absolute; left: 50%; top: 40%; transform: translateX(-50%);
+           background: #1b2026ee; border: 1px solid #3a4450; border-radius: 10px;
+           padding: 8px 14px; font-size: 13px; color: #cfd8e1; cursor: pointer; max-width: 90%; }
+  .lnote[hidden] { display: none; }
+  .lkeys { display: flex; gap: 4px; padding: 5px; background: #151a1f; border-top: 1px solid #2a3138;
+           overflow-x: auto; scrollbar-width: none; }
+  .lkeys[hidden] { display: none; }
+  .lkeys button { flex: 1 0 auto; min-width: 38px; min-height: 36px; font-size: 13px;
+                  color: #cfd8e1; background: #10151a; border: 1px solid #2a3138; border-radius: 8px; }
+  .lkeys button.wide { flex-grow: 2; }
+  .lkeys button.on { background: #2a5db0; color: #fff; }
+  /* ---- Tickets ---- */
+  .tcard.cat-indeterminate { border-left-color: #2a5db0; }
+  .tcard.cat-new { border-left-color: #56616c; }
+  .tcard.cat-done { border-left-color: #3ecf6f; }
+  .tcard .apill { background: #10151a; color: #9fb0c0; }
+  .tcard.cat-indeterminate .apill { background: #16263f; color: #a9cdf5; }
+  .tcard.cat-done .apill { background: #17302a; color: #9fe8c4; }
+  .tdesc { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; color: #cfd8e1;
+           max-height: 50vh; overflow-y: auto; }
+  .tcomment { margin-top: 8px; padding-top: 6px; border-top: 1px solid #222930; font-size: 13px;
+              white-space: pre-wrap; overflow-wrap: anywhere; }
+  .tcomment .alabel { margin-bottom: 2px; }
+  /* ---- service quota & remaining credits strip ---- */
+  .ugrid {
+    display: grid; gap: 8px; margin: 6px 0 10px;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  }
+  #projectsUsage .ugrid {
+    margin: 0; padding: 8px 10px; background: #0c0f12;
+    border-bottom: 1px solid #2a3138; grid-template-columns: 1fr;
+  }
+  .ucard {
+    background: #161b21; border: 1px solid #2a3138; border-radius: 11px;
+    padding: 9px 11px; min-width: 0;
+  }
+  .uhead {
+    display: flex; align-items: center; gap: 7px; font-size: 13px;
+    font-weight: 600; margin-bottom: 6px; flex-wrap: wrap;
+  }
+  .uhead .uname { color: #e7ecf1; }
+  .ucred {
+    font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px;
+    background: #10151a; border: 1px solid #2a3138; color: #9fe8c4;
+    margin-left: auto; white-space: nowrap;
+  }
+  .ucred.warn { color: #ffd29a; border-color: #5c3f18; background: #2c2011; }
+  .ucred.low  { color: #ffb9b9; border-color: #5c2329; background: #2c1417; }
+  .uref {
+    background: #10151a; border: 1px solid #2a3138; border-radius: 6px;
+    color: #9fb0c0; font-size: 12px; padding: 2px 7px; min-height: 24px;
+  }
+  .ubars { display: grid; gap: 5px; }
+  .urow {
+    display: grid; grid-template-columns: 5.8rem 1fr auto; gap: 7px;
+    align-items: center; font-size: 11px;
+  }
+  .ulbl { color: #9fb0c0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ubar {
+    height: 7px; background: #0c0f12; border: 1px solid #252c34;
+    border-radius: 999px; overflow: hidden;
+  }
+  .ufill { height: 100%; background: #3ecf6f; border-radius: 999px; }
+  .ufill.warn { background: #ffb464; }
+  .ufill.low  { background: #e0533f; }
+  .uval {
+    color: #cfd8e1; font-variant-numeric: tabular-nums; white-space: nowrap;
+    text-align: right;
+  }
+  .uval .ureset { color: #7b8894; margin-left: 4px; }
+  .ufoot {
+    font-size: 11px; color: #7b8894; margin-top: 6px;
+    display: flex; justify-content: space-between; gap: 6px; flex-wrap: wrap;
+  }
+  .uchip {
+    font-size: 11px; color: #9fb0c0; background: #10151a;
+    border: 1px solid #2a3138; border-radius: 6px; padding: 1px 6px;
+    white-space: nowrap; flex: none;
+  }
+  #sheet {
+    position: fixed; inset: 0; z-index: 30; background: #000a;
+    display: flex; align-items: flex-end; justify-content: center;
+    padding: 12px; padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+  #sheet[hidden] { display: none; }
+  .sheetBox {
+    width: 100%; max-width: 420px; max-height: 88vh; overflow-y: auto;
+    background: #1b2026; border: 1px solid #2a3138; border-radius: 16px;
+    padding: 14px 14px 12px;
+  }
+  .sheetBox h2 { font-size: 16px; margin-bottom: 10px; }
+  .sheetBox label {
+    display: block; font-size: 12px; color: #7b8894; margin: 12px 0 5px;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .sheetBox .seg { margin-left: 0; width: 100%; }
+  .sheetBox .seg button { flex: 1; min-width: 0; }
+  .sheetBox .seg button.on { background: #2a5db0; color: #fff; }
+  .sheetBox .seg button:disabled { opacity: .35; }
+  .sheetBox select {
+    width: 100%; font-size: 16px; padding: 10px; background: #10151a;
+    color: #e7ecf1; border: 1px solid #2a3138; border-radius: 10px;
+  }
+  .sheetBox .hint { font-size: 12px; color: #7b8894; margin-top: 6px; }
+  .sheetBox .hint.warn { color: #ffb464; }
+  .sheetBtns { display: flex; gap: 8px; margin-top: 16px; }
+  .sheetBtns button {
+    flex: 1; min-height: 44px; border-radius: 10px; font-size: 15px;
+    background: #10151a; border: 1px solid #3a4450;
+  }
+  .sheetBtns button#sheetClose { background: #2a5db0; border-color: #2a5db0; font-weight: 600; }
+  #toast {
+    position: fixed; left: 12px; right: 12px; bottom: 130px; z-index: 20;
+    background: #2b3340; color: #fff; border: 1px solid #3a4450;
+    padding: 10px 14px; border-radius: 12px; font-size: 14px; text-align: center;
+    opacity: 0; pointer-events: none; transition: opacity .25s;
+  }
+  #toast.show { opacity: 1; }
+
+  /* Responsive overrides last: these must beat the base rules above. */
+  @media (min-width: 1100px) {
+    #cols { flex-direction: row; }
+    /* All three stay up; .focus marks the one the composer is wired to. */
+    body.viewProjects #paneProject, body:not(.viewProjects) #paneOperator { display: flex; }
+    #paneOperator { flex: 0 0 330px; border-right: 1px solid #2a3138; }
+    #paneProject  { flex: 1 1 0; border-right: 1px solid #2a3138; }
+    #paneWeb      { flex: 1.25 1 0; display: flex; }
+    .paneHead {
+      display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+      background: #151a1f; border-bottom: 1px solid #2a3138;
+      font-size: 12px; color: #7b8894; min-height: 34px;
+    }
+    .paneHead .grow { flex: 1; min-width: 0; overflow: hidden;
+                      text-overflow: ellipsis; white-space: nowrap; }
+    .paneHead button {
+      background: #10151a; border: 1px solid #2a3138; border-radius: 7px;
+      color: #9fb0c0; font-size: 12px; padding: 4px 8px; min-height: 26px;
+    }
+    .pane.focus > .paneHead { background: #1d2b44; color: #cfe0f5; }
+    .pane.focus > .paneHead .grow { font-weight: 600; }
+    /* The roster is the phone's projects view; on a desktop the tiles are the
+       surface and unselected projects stay out of the way until asked for. */
+    #projects { max-height: none; flex: 0 1 auto; }
+    body.wideRoster #projects { display: block; }
+    body:not(.wideRoster) #projects { display: none; }
+    #tiles { display: grid; }
+    .msg { max-width: 94%; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span id="viewTitle">Agents</span>
+  <select id="project"></select>
+  <span id="dot" class="dot"></span>
+  <button id="refresh" class="icon" title="Reload the page">&#10227;</button>
+  <button id="newchat" class="icon" title="New advisor chat">&#129529;</button>
+  <button id="settingsBtn" class="icon" title="Voice settings">&#9881;</button>
+</header>
+
+<div id="controls">
+  <button id="musicBtn" title="Play / pause music" style="display:none">&#9654;</button>
+  <span id="musicLabel" title="Tap for the next mix" style="display:none">music for programming</span>
+  <div id="listenPause" title="How long a pause ends your turn">
+    <span>pause</span>
+    <button data-pause="short">short</button>
+    <button data-pause="normal">normal</button>
+    <button data-pause="long">long</button>
+  </div>
+  <div id="ttsSpeed" title="Spoken reply speed">
+    <button data-rate="slow">0.8&times;</button>
+    <button data-rate="medium">1&times;</button>
+    <button data-rate="fast">1.2&times;</button>
+  </div>
+</div>
+
+<section id="home" class="listview"><div id="homeInner"></div></section>
+<section id="repos" class="listview">
+  <div id="reposInner">
+    <div id="repoFilterWrap">
+      <input id="repoFilter" type="search" placeholder="Filter projects" autocomplete="off">
+      <button id="repoFilterClear" type="button" title="Clear filter" aria-label="Clear filter" hidden>&times;</button>
+    </div>
+    <div id="reposList"></div>
+  </div>
+</section>
+<section id="tickets" class="listview"><div id="ticketsInner"></div></section>
+
+<div id="cols">
+
+  <section id="paneOperator" class="pane">
+    <div class="paneHead">
+      <span class="grow">&#9776; Operator</span>
+      <button id="clearOperator" title="New chat with the operator">&#129529;</button>
+    </div>
+    <section id="projects">
+      <div id="projectsUsage"></div>
+      <div id="projectsBar">
+        <span id="projectsFold">&#9656;</span>
+        <span class="grow" id="projectsCount">&nbsp;</span>
+        <button id="selAll">All</button>
+        <button id="selNone">None</button>
+      </div>
+      <div id="projectsPinned"></div>
+      <div id="projectCards"></div>
+    </section>
+    <main id="chatOperator" class="chat"></main>
+  </section>
+
+  <section id="paneProject" class="pane">
+    <div class="paneHead">
+      <span class="grow" id="paneProjectName">project</span>
+      <button id="rosterToggle" title="Show every project">All&hellip;</button>
+      <button id="clearProject">&#129529;</button>
+    </div>
+    <div id="tiles"></div>
+    <button id="termRow" title="Open the live terminal">Terminal &#10530;</button>
+    <main id="chatProject" class="chat"></main>
+  </section>
+
+  <section id="paneWeb" class="pane">
+    <div class="paneHead">
+      <span class="grow" id="webTitle">&nbsp;</span>
+      <span id="webTabs"></span>
+      <button id="webReload" title="Reload">&#10227;</button>
+      <button id="webOpen" title="Open in a new tab">&#8599;</button>
+    </div>
+    <div id="webBody">
+      <iframe id="webFrame" referrerpolicy="no-referrer"
+              sandbox="allow-same-origin allow-scripts allow-forms allow-popups"></iframe>
+      <div id="webNote"></div>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div id="statusRow">
+    <div class="seg" id="targetSeg">
+      <button id="targetOperator">&#9776; Operator</button>
+      <button id="targetProject"><span class="dot" id="targetDot"></span><span
+              id="targetProjectName">project</span></button>
+    </div>
+    <div class="seg" id="agentSeg" hidden></div>
+    <div id="voiceState"><span class="pulse"></span><span id="voiceStateText"></span></div>
+  </div>
+  <div class="row quick">
+    <button id="btnStatus" class="qa">&#128202; Status</button>
+    <button id="btnBrainstorm" class="qa">&#128161; Brainstorm</button>
+    <button id="btnSpeak" class="qa" title="Read replies aloud">&#128266; Speak</button>
+    <button id="btnConvo" class="qa" title="Hands-free: reopen the mic after each reply">&#127908; Convo</button>
+    <div class="seg" id="destSeg">
+      <button id="destAdvisor" class="on">Sonnet</button>
+      <button id="destProject">Project</button>
+    </div>
+  </div>
+  <div class="row">
+    <button id="mic" title="Push to talk">&#127908;</button>
+    <textarea id="input" rows="1" placeholder="Dictate or type&hellip;"></textarea>
+    <button id="send">Ask</button>
+  </div>
+</footer>
+
+<nav id="tabs">
+  <button data-tab="home"><span class="ti">&#9673;</span>Agents<span class="tbadge" id="needBadge" hidden></span></button>
+  <button data-tab="repos"><span class="ti">&#9638;</span>Projects</button>
+  <button data-tab="tickets" id="tabTickets"><span class="ti">&#9744;</span>Tickets</button>
+  <button data-tab="talk" id="tabTalk"><span class="ti">&#127908;</span>Talk</button>
+</nav>
+
+<!-- The terminal, full screen: a terminal squeezed into a card is no use. -->
+<div id="termView" hidden>
+  <div id="termBar">
+    <button id="termClose" title="Back">&#8249;</button>
+    <span id="termTitle"></span>
+    <div class="seg aseg" id="termAgents"></div>
+  </div>
+  <div id="termHost"></div>
+</div>
+
+<div id="sheet" hidden>
+  <div class="sheetBox">
+    <h2>Voice</h2>
+
+    <label>Speech input</label>
+    <div class="seg" id="sttSeg">
+      <button data-mode="auto">Auto</button>
+      <button data-mode="browser">Browser</button>
+      <button data-mode="server">Local server</button>
+    </div>
+    <p class="hint" id="sttHint"></p>
+
+    <label>Spoken replies</label>
+    <div class="seg" id="ttsSeg">
+      <button data-engine="browser">Browser</button>
+      <button data-engine="kokoro">Kokoro</button>
+    </div>
+    <p class="hint" id="ttsHint"></p>
+
+    <label>Voice</label>
+    <select id="voiceSel"></select>
+
+    <div id="musicOpt">
+      <label>Background music</label>
+      <div class="seg" id="musicSeg">
+        <button data-on="0">Off</button>
+        <button data-on="1">On</button>
+      </div>
+      <p class="hint">Mixes from musicforprogramming.net while you work in Talk;
+        they pause when a summary is read out.</p>
+    </div>
+
+    <div class="sheetBtns">
+      <button id="voiceTest">&#9654; Test</button>
+      <button id="sheetClose">Done</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let projects = [], current = null, dest = 'advisor', busy = false;
+/* Two views over the same chat furniture. 'project' is one project and its
+   advisor; 'projects' is every selected project at once and the operator that
+   watches them. The mic, Speak and Convo don't know the difference — whichever
+   conversation is on screen is the one they talk to. */
+let view = 'project', operatorOn = false, OPERATOR = '@operator';
+let ovTimer = null, lastOverviewTs = 0;
+let webTargets = [], webIndex = 0;
+let httpsPort = 8322, httpPort = 8321;
+/* Local speech servers, as reported by /api/meta. Off means this page falls
+   back to whatever speech the browser has of its own — which on Firefox is
+   synthesis only, and on Firefox/Linux means espeak voices. */
+let serverSTT = false, serverTTS = false, defaultKokoroVoice = 'af_heart';
+let kokoroVoices = [], kokoroErr = '', metaReady = null;
+let terminalWeb = null;   // the browser terminal's address, from /api/meta
+/* What this server offers, from /api/meta. Without the voice feature there is
+   no Talk tab: the page is Agents, Projects and Tickets. */
+let voiceOn = true, jiraOn = false, jiraUrl = '', usageOn = false;
+let DEFAULT_AGENT = 'claude';
+
+/* ---------- api ---------- */
+const RETRY_ATTEMPTS = 3, RETRY_DELAY = 1000;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* One attempt. Failures carry .retryable / .network so api() can decide. */
+async function apiOnce(path, opts) {
+  let r;
+  try {
+    r = await fetch(path, opts);
+  } catch (e) {
+    const err = new Error('network error — ' + (e.message || 'request failed'));
+    err.network = true;
+    throw err;
+  }
+  if (r.status === 401) {
+    const t = prompt('Access token:');
+    if (!t) throw new Error('unauthorized');
+    localStorage.setItem('vp.token', t);
+    opts.headers['X-VP-Token'] = t;
+    return apiOnce(path, opts);
+  }
+  const data = await r.json().catch(() => ({ error: 'bad response from server' }));
+  if (!r.ok) {
+    const err = new Error(data.error || ('HTTP ' + r.status));
+    // A 4xx is the server's considered answer — it won't differ in a second.
+    err.retryable = r.status >= 500 || r.status === 408 || r.status === 429;
+    throw err;
+  }
+  return data;
+}
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({}, opts.headers);
+  const tok = localStorage.getItem('vp.token');
+  if (tok) opts.headers['X-VP-Token'] = tok;
+  if (opts.body && typeof opts.body !== 'string' && !(opts.body instanceof Blob)) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(opts.body);
+    opts.method = opts.method || 'POST';
+  }
+  // A dropped connection never says whether the server already acted, so only
+  // replay requests that change nothing. /api/send is off limits either way:
+  // repeating it could type the same prompt into the agent twice, which is
+  // worse than making you tap Send again.
+  const isGet = !opts.method || opts.method === 'GET';
+  const mayRetry = path.split('?')[0] !== '/api/send';
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await apiOnce(path, opts);
+    } catch (e) {
+      const worthRetrying = mayRetry && (e.retryable || (e.network && isGet));
+      if (!worthRetrying || attempt >= RETRY_ATTEMPTS) throw e;
+      await sleep(RETRY_DELAY);
+    }
+  }
+}
+
+function authHeaders() {
+  const tok = localStorage.getItem('vp.token');
+  return tok ? { 'X-VP-Token': tok } : {};
+}
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove('show'), 4500);
+}
+
+/* ---------- tiny markdown ---------- */
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function inline(s) {
+  return esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+}
+function md(t) {
+  const parts = t.split('```');
+  let html = '';
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 1) {
+      let c = parts[i];
+      const nl = c.indexOf('\n');
+      if (nl > -1 && /^[\w+.-]*\s*$/.test(c.slice(0, nl))) c = c.slice(nl + 1);
+      html += '<pre class="code">' + esc(c.replace(/\n$/, '')) + '</pre>';
+    } else {
+      html += parts[i].split('\n').map(l => {
+        if (/^#{1,4}\s/.test(l)) return '<b class="h">' + inline(l.replace(/^#+\s*/, '')) + '</b>';
+        if (/^\s*[-*]\s+/.test(l)) return '<span class="li">&bull;&nbsp;' + inline(l.replace(/^\s*[-*]\s+/, '')) + '</span>';
+        return inline(l);
+      }).join('<br>').replace(/(<\/span>)<br>/g, '$1').replace(/(<\/b>)<br>/g, '$1');
+    }
+  }
+  return html;
+}
+function lastCodeBlock(t) {
+  const m = t.match(/```[^\n]*\n([\s\S]*?)```/g);
+  if (!m) return null;
+  return m[m.length - 1].replace(/^```[^\n]*\n/, '').replace(/```$/, '').trim();
+}
+
+/* ---------- text-to-speech ---------- */
+const TTS_RATES = { slow: 0.8, medium: 1.0, fast: 1.2 };
+let ttsRate = localStorage.getItem('vp.ttsRate');
+if (TTS_RATES[ttsRate] === undefined) ttsRate = 'fast';
+
+/* The speed lives on the server, so the operator's set_speech_speed and these
+   buttons are one setting. localStorage only paints the buttons before
+   /api/meta answers; a reply carries the server's current rate. */
+function setTtsRate(name, save) {
+  if (TTS_RATES[name] === undefined) return;
+  ttsRate = name;
+  localStorage.setItem('vp.ttsRate', name);
+  for (const b of $('ttsSpeed').children) b.classList.toggle('on', b.dataset.rate === name);
+  if (save) api('/api/tts/rate', { body: { rate: name } }).catch(e => toast(e.message));
+}
+for (const b of $('ttsSpeed').children) {
+  b.onclick = () => { unlockTTS(); setTtsRate(b.dataset.rate, true); };
+}
+
+let speakOn = localStorage.getItem('vp.speak') === '1';
+let handsFree = false;
+let ttsActive = false;
+let ttsVoice = null;          // browser engine: the SpeechSynthesisVoice in use
+let ttsUnlocked = false;
+let ttsGen = 0;               // bumped by stopSpeaking; stale playback checks it
+let ttsAudio = null;          // the one <audio> element the Kokoro path plays through
+let clipDone = null;          // resolver for the clip playing right now
+let silentUrl = null;
+let ttsEngine = localStorage.getItem('vp.ttsEngine') || 'browser';
+
+/* Which engine actually speaks. Kokoro is only honoured once the server says
+   it has a TTS endpoint, so a config that drops it falls back to the browser
+   rather than going quiet. */
+function ttsEngineNow() {
+  return (ttsEngine === 'kokoro' && serverTTS) ? 'kokoro' : 'browser';
+}
+function kokoroVoice() {
+  return localStorage.getItem('vp.voice.kokoro') || defaultKokoroVoice;
+}
+
+/* Pick the engine for a browser that hasn't been told which to use. A browser
+   with no voices installed — Firefox without speech-dispatcher — would
+   otherwise just say nothing, which reads as broken rather than as a setting.
+   Only ever a default: the moment ⚙ is used, that choice is saved and wins.
+   Re-run as voices arrive, since Chrome fills its list asynchronously. */
+function defaultTtsEngine() {
+  if (localStorage.getItem('vp.ttsEngine')) return;
+  const voices = ('speechSynthesis' in window) ? speechSynthesis.getVoices().length : 0;
+  ttsEngine = (serverTTS && !voices) ? 'kokoro' : 'browser';
+}
+
+/* A saved pick wins; otherwise iOS's good voices, then any local English one —
+   on Linux that lands on espeak, which is the reason Kokoro is worth having. */
+function pickVoice() {
+  const vs = speechSynthesis.getVoices();
+  const want = localStorage.getItem('vp.voice.browser');
+  ttsVoice =
+    (want && vs.find(v => v.voiceURI === want)) ||
+    vs.find(v => /^en/.test(v.lang) && /Samantha|Siri|Ava|Zoe/i.test(v.name)) ||
+    vs.find(v => /^en/.test(v.lang) && v.localService) ||
+    vs.find(v => /^en/.test(v.lang)) || null;
+  defaultTtsEngine();
+  if (!$('sheet').hidden) fillVoices();   // Chrome fills the list asynchronously
+}
+if ('speechSynthesis' in window) {
+  speechSynthesis.onvoiceschanged = pickVoice;
+  pickVoice();
+}
+
+function audioEl() {
+  if (!ttsAudio) { ttsAudio = new Audio(); ttsAudio.preload = 'auto'; }
+  return ttsAudio;
+}
+/* Both engines are gated on a user gesture by iOS, and the Kokoro one can't
+   satisfy that when the moment comes: its first clip arrives from a fetch,
+   long after the tap. So spend the tap now, on a tenth of a second of silence. */
+function unlockTTS() {
+  if (ttsUnlocked) return;
+  ttsUnlocked = true;
+  if ('speechSynthesis' in window) {
+    const u = new SpeechSynthesisUtterance(' ');
+    u.volume = 0;
+    speechSynthesis.speak(u);
+  }
+  try {
+    if (!silentUrl) silentUrl = URL.createObjectURL(wavBlob(new Float32Array(1600), 16000));
+    const el = audioEl();
+    el.src = silentUrl;
+    el.play().catch(() => {});
+  } catch (e) {}
+}
+
+function speakable(t) {
+  return t
+    .replace(/```[\s\S]*?```/g, ' Code block omitted. ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*/g, '')
+    .replace(/^#+\s*/gm, '')
+    .replace(/^\s*[-*]\s+/gm, '')
+    .replace(/\s+/g, ' ').trim();
+}
+
+/* Sentence groups <= ~230 chars. iOS truncates long utterances, and short
+   chunks are also what lets Kokoro start talking before the whole reply has
+   been synthesized. */
+function speakChunks(t) {
+  const sentences = t.match(/[^.!?]+[.!?]*\s*/g) || [t];
+  const chunks = [];
+  let cur = '';
+  for (const s of sentences) {
+    if ((cur + s).length > 230 && cur) { chunks.push(cur); cur = s; }
+    else cur += s;
+  }
+  if (cur.trim()) chunks.push(cur);
+  return chunks;
+}
+
+function speakText(raw) {
+  const t = speakable(raw);
+  if (!t) return Promise.resolve();
+  const chunks = speakChunks(t);
+  const gen = ttsGen;
+  ttsActive = true;
+  setVoiceState('speaking');
+  const play = ttsEngineNow() === 'kokoro' ? speakKokoro : speakBrowser;
+  return play(chunks, gen).then(() => {
+    if (gen !== ttsGen) return;         // stopSpeaking already cleared the state
+    ttsActive = false;
+    if (voiceStateIs('speaking')) setVoiceState(null);
+  });
+}
+
+function speakBrowser(chunks, gen) {
+  return new Promise(resolve => {
+    if (!('speechSynthesis' in window)) {
+      toast('This browser has no speech synthesis' +
+            (serverTTS ? ' — switch spoken replies to Kokoro in \u2699.' : '.'));
+      return resolve();
+    }
+    let i = 0;
+    const next = () => {
+      if (gen !== ttsGen || i >= chunks.length) return resolve();
+      const u = new SpeechSynthesisUtterance(chunks[i++]);
+      if (ttsVoice) u.voice = ttsVoice;
+      u.rate = TTS_RATES[ttsRate];  // read per chunk, so a change lands mid-reply
+      u.onend = next;
+      u.onerror = next;
+      speechSynthesis.speak(u);
+    };
+    next();
+  });
+}
+
+async function fetchSpeech(text) {
+  const r = await fetch('/api/tts', {
+    method: 'POST',
+    headers: Object.assign({ 'Content-Type': 'application/json' }, authHeaders()),
+    body: JSON.stringify({ text, voice: kokoroVoice(), speed: TTS_RATES[ttsRate] }),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    throw new Error(d.error || ('HTTP ' + r.status));
+  }
+  return URL.createObjectURL(await r.blob());
+}
+
+function playClip(el, url) {
+  return new Promise(resolve => {
+    const done = () => { el.onended = el.onerror = null; clipDone = null; resolve(); };
+    clipDone = done;              // stopSpeaking pauses, which fires no event
+    el.onended = done;
+    el.onerror = done;
+    el.src = url;
+    el.play().catch(() => done());
+  });
+}
+
+/* Fetch the next chunk while the current one plays. Kokoro synthesizes at
+   roughly the speed the audio runs at, so taking them strictly in turn would
+   leave a gap between every sentence. */
+async function speakKokoro(chunks, gen) {
+  const el = audioEl();
+  const grab = text => fetchSpeech(text).then(url => ({ url }), err => ({ err }));
+  let pending = grab(chunks[0]);
+  for (let i = 0; i < chunks.length; i++) {
+    const got = await pending;
+    pending = (i + 1 < chunks.length && gen === ttsGen) ? grab(chunks[i + 1]) : null;
+    if (got.err) {
+      if (gen === ttsGen) toast('Kokoro: ' + got.err.message);
+      break;
+    }
+    if (gen !== ttsGen) { URL.revokeObjectURL(got.url); break; }
+    await playClip(el, got.url);
+    URL.revokeObjectURL(got.url);
+    if (gen !== ttsGen) break;
+  }
+  // A clip fetched for a reply we're no longer reading still has to be freed.
+  if (pending) pending.then(g => { if (g.url) URL.revokeObjectURL(g.url); });
+}
+
+function stopSpeaking() {
+  ttsActive = false;
+  ttsGen++;
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  if (ttsAudio) { try { ttsAudio.pause(); } catch (e) {} }
+  if (clipDone) clipDone();
+  if (voiceStateIs('speaking')) setVoiceState(null);
+}
+
+/* ---------- background music ---------- */
+/* Streams the musicforprogramming.net episodes straight from their host (the
+   server only fetches the feed, which sends no CORS header). Plays while the
+   agent works; pauses itself when a summary lands so the spoken update is
+   clear. Manual pause is remembered across reloads; the automatic one isn't. */
+let tracks = [], trackIx = 0, musicArmed = false, trackErrs = 0;
+let musicWanted = localStorage.getItem('vp.music') !== '0';
+/* Music is an option of voice mode, off until turned on in ⚙ (per browser).
+   The server's [voice] music = false takes the option away altogether. */
+let musicOn = localStorage.getItem('vp.musicOn') === '1';
+let serverMusic = true, musicInited = false;
+const audio = new Audio();
+audio.preload = 'none';
+
+function setMusicBtn() {
+  $('musicBtn').textContent = audio.paused ? '▶' : '⏸';
+  $('musicBtn').classList.toggle('on', !audio.paused);
+}
+function loadTrack(i, play) {
+  if (!tracks.length) return;
+  trackIx = ((i % tracks.length) + tracks.length) % tracks.length;
+  audio.src = tracks[trackIx].url;
+  $('musicLabel').textContent = tracks[trackIx].title;
+  if (play) startMusic();
+}
+function startMusic() {
+  const p = audio.play();
+  if (p && p.catch) p.catch(() => {
+    // Autoplay with sound is blocked until the page has been interacted with
+    // (always on iOS). Start on the first tap instead.
+    armMusicGesture();
+    setMusicBtn();
+  });
+}
+function armMusicGesture() {
+  if (musicArmed) return;
+  musicArmed = true;
+  document.addEventListener('pointerdown', () => {
+    musicArmed = false;
+    if (musicWanted && audio.paused) startMusic();
+  }, { once: true });
+}
+function pauseMusicForSummary() {
+  // Not the user's choice, so don't remember it as one.
+  if (!audio.paused) audio.pause();
+}
+audio.addEventListener('play', setMusicBtn);
+audio.addEventListener('pause', setMusicBtn);
+audio.addEventListener('playing', () => { trackErrs = 0; });
+audio.addEventListener('ended', () => loadTrack(trackIx + 1, true));
+audio.addEventListener('error', () => {
+  if (musicWanted && ++trackErrs < 4) loadTrack(trackIx + 1, true);
+});
+$('musicBtn').onclick = () => {
+  if (audio.paused) {
+    musicWanted = true;
+    localStorage.setItem('vp.music', '1');
+    if (audio.src) startMusic(); else loadTrack(trackIx, true);
+  } else {
+    musicWanted = false;
+    localStorage.setItem('vp.music', '0');
+    audio.pause();
+  }
+};
+$('musicLabel').onclick = () => {
+  musicWanted = true;
+  localStorage.setItem('vp.music', '1');
+  loadTrack(trackIx + 1, true);
+};
+function applyMusic() {
+  const show = serverMusic && voiceOn && musicOn;
+  $('musicOpt').hidden = !(serverMusic && voiceOn);
+  for (const b of $('musicSeg').children) b.classList.toggle('on', (b.dataset.on === '1') === musicOn);
+  if (!show) {
+    audio.pause();
+    hideMusicControls();
+    return;
+  }
+  $('musicBtn').style.display = '';
+  $('musicLabel').style.display = '';
+  if (!musicInited) { musicInited = true; initMusic(); }
+}
+for (const b of $('musicSeg').children) {
+  b.onclick = () => {
+    musicOn = b.dataset.on === '1';
+    localStorage.setItem('vp.musicOn', musicOn ? '1' : '0');
+    // Turning it on is asking for it now; this tap is the gesture it needs.
+    if (musicOn) { musicWanted = true; localStorage.setItem('vp.music', '1'); }
+    applyMusic();
+    if (musicOn && audio.src) startMusic();
+  };
+}
+function hideMusicControls() {
+  // The bar stays — the speech-speed buttons live there too.
+  $('musicBtn').style.display = 'none';
+  $('musicLabel').style.display = 'none';
+}
+async function initMusic() {
+  let d;
+  try { d = await api('/api/music'); } catch (e) { hideMusicControls(); return; }
+  tracks = d.tracks || [];
+  if (!tracks.length) { hideMusicControls(); return; }
+  setMusicBtn();
+  loadTrack(Math.floor(Math.random() * tracks.length), musicWanted);
+}
+
+/* ---------- speech input ---------- */
+/* Two ways in. The Web Speech API is what Safari and Chrome provide, and it is
+   the low-latency one — the browser streams the mic to its own recognizer and
+   hands back interim text as you talk. Firefox implements none of it, so there
+   the page records the mic itself and posts the audio to whatever transcription
+   server config.toml points at. Either way the mic needs a secure context. */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+let sttMode = localStorage.getItem('vp.sttMode') || 'auto';
+let rec = null, listening = false, emptyListens = 0, restartTimer = null, recSilence = null;
+let cap = null;        // the recording in flight, on the server path
+let listenGen = 0;     // bumped whenever the mic is released; async work checks it
+
+function useServerSTT() {
+  if (!serverSTT) return false;
+  if (sttMode === 'server') return true;
+  if (sttMode === 'browser') return false;
+  return !SR;          // auto: the browser's own recognizer wherever there is one
+}
+function sttAvailable() {
+  return !!SR || (serverSTT && sttMode !== 'browser');
+}
+
+/* Why the mic isn't going to work, in terms of the browser actually asking.
+   This used to name Safari's settings unconditionally, which is nonsense on a
+   desktop Firefox that has no recognizer to grant permission to. */
+function voiceHint(kind) {
+  if (kind === 'insecure') {
+    if (location.protocol === 'https:') return 'Mic unavailable in this browser.';
+    if (!httpsPort) return 'Voice input needs HTTPS — set https_port in config.toml and restart the server.';
+    return 'Voice input needs HTTPS. Open https://' + location.hostname + ':' + httpsPort +
+           ' and accept the certificate warning once.';
+  }
+  if (kind === 'denied') {
+    return IOS ? 'Mic blocked — check Settings > Safari > Microphone.'
+               : 'Mic blocked — allow microphone access for this site (the padlock in the address bar).';
+  }
+  if (kind === 'nomic') return 'No microphone found.';
+  if (serverSTT) return 'This browser has no speech recognition — set Speech input to "Local server" in ⚙.';
+  return 'This browser has no speech recognition (Firefox ships none). Use Chrome or Safari, ' +
+         'or set stt_url in config.toml to transcribe on this machine.';
+}
+function failListen(kind) {
+  toast(voiceHint(kind));
+  if (handsFree) setConvo(false);
+}
+function clearRestart() {
+  if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+}
+function markListening() {
+  listening = true;
+  $('mic').classList.add('listening');
+  setVoiceState('listening');
+}
+function idleMic() {
+  listening = false;
+  $('mic').classList.remove('listening');
+  if (voiceStateIs('listening') || voiceStateIs('transcribing')) setVoiceState(null);
+}
+
+async function startListen() {
+  if (listening) return;
+  // Which paths exist is the server's answer, and on a cold load it may not
+  // have arrived yet — a hands-free restart can easily beat it.
+  if (metaReady) { try { await metaReady; } catch (e) {} }
+  if (listening) return;
+  if (!window.isSecureContext) { failListen('insecure'); return; }
+  if (!sttAvailable()) { failListen('nosupport'); return; }
+  stopSpeaking();
+  clearRestart();
+  const gen = ++listenGen;   // orphans an unfinished turn, handlers and all
+  discardRec();
+  discardCapture();
+  if (useServerSTT()) startServerListen(gen);
+  else startWebSpeech();
+}
+
+/* The tail both paths share: hand the text to the advisor when hands-free, and
+   decide whether the mic reopens. */
+function finishListen(text) {
+  idleMic();
+  if (!handsFree) return;
+  if (text) {
+    emptyListens = 0;
+    $('input').value = '';
+    autogrow();
+    askAdvisor('discuss', text);
+  } else if (++emptyListens >= 2) {
+    setConvo(false);
+    toast('Voice paused (silence) — tap Convo to resume.');
+  } else {
+    restartTimer = setTimeout(() => {
+      restartTimer = null;
+      if (handsFree && !busy) startListen();
+    }, 400);
+  }
+}
+
+/* ---- browser recognizer (Safari, Chrome) ---- */
+function startWebSpeech() {
+  rec = new SR();
+  rec.lang = 'en-US';
+  rec.interimResults = true;
+  // Continuous, so the recognizer's own endpointing (about a second) can't cut
+  // a sentence short; the silence timer below decides where the turn ends.
+  rec.continuous = true;
+  const r = rec, t0 = performance.now();
+  const quietFor = ms => {
+    clearTimeout(recSilence);
+    recSilence = setTimeout(() => { if (rec === r) try { r.stop(); } catch (e) {} }, ms);
+  };
+  quietFor(NO_SPEECH_MS);
+  rec.onresult = e => {
+    let text = '';
+    for (let i = 0; i < e.results.length; i++) text += e.results[i][0].transcript;
+    $('input').value = text.trim();
+    autogrow();
+    // Words are still arriving: the wait starts over from here.
+    quietFor(Math.min(silenceMs(), Math.max(0, t0 + MAX_UTTERANCE_MS - performance.now())));
+  };
+  rec.onerror = e => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      failListen('denied');
+    } else if (e.error === 'network') {
+      // Chrome talks to a Google service to recognize; Chromium builds without
+      // the API keys, and any offline machine, end up here.
+      toast(serverSTT
+        ? 'The browser recognizer could not reach its speech service — set Speech input to "Local server" in ⚙.'
+        : 'The browser recognizer could not reach its speech service.');
+      if (handsFree) setConvo(false);
+    } else if (e.error !== 'no-speech' && e.error !== 'aborted') {
+      toast('mic error: ' + e.error);
+    }
+  };
+  rec.onend = () => {
+    clearTimeout(recSilence);
+    rec = null;                      // spent — nothing left to abort
+    finishListen($('input').value.trim());
+  };
+  try { rec.start(); } catch (e) { toast('mic: ' + e.message); rec = null; return; }
+  markListening();
+}
+
+/* Drop the current recognition object, handlers first — a detached onend can't
+   fire the hands-free restart, which is what made a stopped mic come back on.
+   abort() rather than stop(): stop() keeps capturing until it can deliver a
+   final result, so iOS holds the mic indicator (and fills the input box) after
+   the tap that was meant to end listening. */
+function discardRec() {
+  clearTimeout(recSilence);
+  if (!rec) return;
+  rec.onresult = rec.onerror = rec.onend = null;
+  try { rec.abort(); } catch (e) {}
+  rec = null;
+}
+
+/* ---- recording for a transcription server (Firefox, or by choice) ---- */
+const STT_RATE = 16000;
+/* Where the utterance ends: this much quiet after the last speech, on both the
+   browser recognizer and the recording path. Hands-free has to work that out
+   for itself, so it cuts sooner; push-to-talk waits longer, because there the
+   second tap is the real end signal and a pause mid-thought shouldn't pre-empt
+   it. The pause buttons pick the row; read on every check, so a change lands
+   on the utterance already under way. */
+const SILENCE_MS = {
+  short:  { convo: 1400, push: 2000 },
+  normal: { convo: 2500, push: 3000 },
+  long:   { convo: 4000, push: 5000 },
+};
+let listenPause = localStorage.getItem('vp.listenPause');
+if (!SILENCE_MS[listenPause]) listenPause = 'normal';
+function silenceMs() { return SILENCE_MS[listenPause][handsFree ? 'convo' : 'push']; }
+function setListenPause(name) {
+  if (!SILENCE_MS[name]) return;
+  listenPause = name;
+  localStorage.setItem('vp.listenPause', name);
+  for (const b of $('listenPause').querySelectorAll('button'))
+    b.classList.toggle('on', b.dataset.pause === name);
+}
+for (const b of $('listenPause').querySelectorAll('button')) b.onclick = () => setListenPause(b.dataset.pause);
+setListenPause(listenPause);
+const NO_SPEECH_MS = 7000, MAX_UTTERANCE_MS = 60000;
+
+/* Raw frames straight off the graph. MediaRecorder would hand back Opus in a
+   container that then needs decoding somewhere; this way the samples are
+   already what the WAV wants, and the same frames drive the silence detector. */
+const CAPTURE_WORKLET = `
+class Cap extends AudioWorkletProcessor {
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (ch && ch.length) this.port.postMessage(new Float32Array(ch));
+    return true;
+  }
+}
+registerProcessor('vp-capture', Cap);
+`;
+let workletUrl = null;
+
+async function startServerListen(gen) {
+  markListening();
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true,
+               noiseSuppression: true, autoGainControl: true },
+    });
+  } catch (e) {
+    if (gen !== listenGen) return;
+    idleMic();
+    failListen(e && e.name === 'NotFoundError' ? 'nomic' : 'denied');
+    return;
+  }
+  if (gen !== listenGen) { stopTracks(stream); return; }   // released while it asked
+
+  let ctx = null;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    // 16 kHz straight from the graph is what whisper wants; if the browser
+    // insists on its own rate, wavBlob resamples on the way out.
+    try { ctx = new AC({ sampleRate: STT_RATE }); } catch (e) { ctx = new AC(); }
+    if (!workletUrl) {
+      workletUrl = URL.createObjectURL(
+        new Blob([CAPTURE_WORKLET], { type: 'application/javascript' }));
+    }
+    await ctx.audioWorklet.addModule(workletUrl);
+    await ctx.resume();
+  } catch (e) {
+    stopTracks(stream);
+    if (ctx) ctx.close().catch(() => {});
+    if (gen !== listenGen) return;
+    idleMic();
+    toast('mic capture failed: ' + e.message);
+    if (handsFree) setConvo(false);
+    return;
+  }
+  if (gen !== listenGen) { stopTracks(stream); ctx.close().catch(() => {}); return; }
+
+  const src = ctx.createMediaStreamSource(stream);
+  const node = new AudioWorkletNode(ctx, 'vp-capture');
+  // Nothing here should be audible, but the graph only runs where it reaches
+  // the destination, so the tap goes out through a silent gain.
+  const mute = ctx.createGain();
+  mute.gain.value = 0;
+  src.connect(node);
+  node.connect(mute);
+  mute.connect(ctx.destination);
+
+  const t0 = performance.now();
+  cap = { gen, ctx, stream, src, node, mute, chunks: [], rate: ctx.sampleRate,
+          noise: 0.005, spoke: false, t0, lastLoud: t0 };
+  node.port.onmessage = e => {
+    const c = cap;
+    if (!c || c.gen !== listenGen) return;
+    const frame = e.data;
+    c.chunks.push(frame);
+    let sum = 0;
+    for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
+    const rms = Math.sqrt(sum / frame.length);
+    const t = performance.now();
+    // Adaptive gate: the floor follows the room, and speech has to clear it.
+    if (rms > c.noise * 3 + 0.008) { c.spoke = true; c.lastLoud = t; }
+    else c.noise = c.noise * 0.95 + rms * 0.05;
+    if (c.spoke ? t - c.lastLoud > silenceMs() : t - c.t0 > NO_SPEECH_MS) endCapture(true);
+    else if (t - c.t0 > MAX_UTTERANCE_MS) endCapture(true);
+  };
+}
+
+function stopTracks(stream) {
+  try { for (const t of stream.getTracks()) t.stop(); } catch (e) {}
+}
+function teardownCapture(c) {
+  try {
+    c.node.port.onmessage = null;
+    c.node.disconnect();
+    c.src.disconnect();
+    c.mute.disconnect();
+  } catch (e) {}
+  stopTracks(c.stream);      // the browser's recording indicator goes out here
+  c.ctx.close().catch(() => {});
+}
+/* Throw the recording away — the mic goes quiet and what was said is dropped. */
+function discardCapture() {
+  const c = cap;
+  if (!c) return;
+  cap = null;
+  teardownCapture(c);
+}
+
+/* Close the recording and, if anything was actually said, send it up. */
+async function endCapture(transcribe) {
+  const c = cap;
+  if (!c) return;
+  cap = null;
+  teardownCapture(c);
+  if (c.gen !== listenGen) return;                  // released mid-utterance
+  if (!transcribe || !c.spoke) { finishListen(''); return; }
+  setVoiceState('transcribing');
+  let text = '';
+  try {
+    const d = await api('/api/stt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'audio/wav' },
+      body: wavBlob(joinChunks(c.chunks), c.rate),
+    });
+    text = (d.text || '').trim();
+  } catch (e) {
+    if (c.gen !== listenGen) return;
+    idleMic();
+    toast('transcription failed — ' + e.message);
+    if (handsFree) setConvo(false);   // don't loop a hands-free turn onto a dead server
+    return;
+  }
+  if (c.gen !== listenGen) return;
+  if (text) { $('input').value = text; autogrow(); }
+  finishListen(text);
+}
+
+function joinChunks(chunks) {
+  let n = 0;
+  for (const c of chunks) n += c.length;
+  const out = new Float32Array(n);
+  let o = 0;
+  for (const c of chunks) { out.set(c, o); o += c.length; }
+  return out;
+}
+function resampleTo(data, from, to) {
+  if (from === to || !data.length) return data;
+  const ratio = from / to, n = Math.max(1, Math.round(data.length / ratio));
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = i * ratio, i0 = Math.floor(x), i1 = Math.min(i0 + 1, data.length - 1);
+    out[i] = data[i0] + (data[i1] - data[i0]) * (x - i0);
+  }
+  return out;
+}
+/* 16 kHz mono 16-bit WAV: the one format every transcription server takes, and
+   the only one whisper.cpp's takes. */
+function wavBlob(samples, rate) {
+  const pcm = resampleTo(samples, rate || STT_RATE, STT_RATE);
+  const buf = new ArrayBuffer(44 + pcm.length * 2);
+  const dv = new DataView(buf);
+  const tag = (off, str) => {
+    for (let i = 0; i < str.length; i++) dv.setUint8(off + i, str.charCodeAt(i));
+  };
+  tag(0, 'RIFF'); dv.setUint32(4, 36 + pcm.length * 2, true); tag(8, 'WAVE');
+  tag(12, 'fmt '); dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, STT_RATE, true); dv.setUint32(28, STT_RATE * 2, true);
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  tag(36, 'data'); dv.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) {
+    const v = Math.max(-1, Math.min(1, pcm[i]));
+    dv.setInt16(44 + i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+/* Off means off. Bumping listenGen orphans everything still in flight — a
+   recognition object, a recording, a transcription already posted — so none of
+   it can come back and reopen the mic after the tap that closed it. */
+function releaseMic() {
+  listenGen++;
+  clearRestart();
+  discardRec();
+  discardCapture();
+  idleMic();
+}
+
+/* The user says they're done. On the browser recognizer that abandons the turn
+   (see discardRec). On the recording path the tap *is* the end of the
+   utterance, so the audio still goes up — losing a sentence to a mistimed tap
+   would be worse than the extra second of waiting. */
+function stopListen() {
+  if (cap) endCapture(true);
+  else releaseMic();
+}
+
+/* ---------- which of the project's agents ---------- */
+/* A project can run Claude Code and Antigravity side by side. The terminal,
+   Send, and the advisor's tools all follow this choice, remembered per
+   project. Never picked: whichever is running, Claude Code first. */
+const AGENT_SHORT = { claude: 'Claude', agy: 'Agy', copilot: 'Copilot' };
+function agentShort(id) { return AGENT_SHORT[id] || (id ? id[0].toUpperCase() + id.slice(1) : id); }
+function instancesOf(name) {
+  const p = projects.find(x => x.name === name);
+  return (p && p.instances) || [];
+}
+function currentAgent() {
+  const list = instancesOf(current);
+  const want = localStorage.getItem('vp.agent.' + current);
+  if (want && list.some(i => i.id === want)) return want;
+  const live = list.find(i => i.alive);
+  return live ? live.id : DEFAULT_AGENT;
+}
+function setAgent(id) {
+  if (!current) return;
+  localStorage.setItem('vp.agent.' + current, id);
+  updateTarget();
+}
+/* " · Agy", only where there is a choice to have made. */
+function agentSuffix() {
+  return instancesOf(current).length > 1 ? ' · ' + agentShort(currentAgent()) : '';
+}
+function renderAgentSeg() {
+  const seg = $('agentSeg');
+  const list = instancesOf(current);
+  seg.hidden = list.length < 2;
+  seg.innerHTML = '';
+  if (seg.hidden) return;
+  const on = currentAgent();
+  for (const i of list) {
+    const b = document.createElement('button');
+    b.className = i.id === on ? 'on' : '';
+    b.title = i.label + (i.alive ? ' — running' : ' — not running');
+    b.innerHTML = '<span class="dot' + (i.alive ? ' on' : '') + '"></span>';
+    b.appendChild(document.createTextNode(agentShort(i.id)));
+    b.onclick = () => setAgent(i.id);
+    seg.appendChild(b);
+  }
+}
+/* Small running-agent labels for the roster and tiles. */
+function agentChips(p) {
+  const live = (p.instances || []).filter(i => i.alive);
+  if (!live.length || (live.length === 1 && live[0].id === DEFAULT_AGENT)) return '';
+  return live.map(i => ' <span class="achip on">' + esc(agentShort(i.id)) + '</span>').join('');
+}
+
+/* ---------- who the composer is talking to ---------- */
+function targetName() {
+  return view === 'projects' ? 'the operator' : (current ? current + agentSuffix() : 'project');
+}
+
+/* Keeps the switch, the placeholder and the send button telling the same
+   story. Called from both setView and setDest, because either can change it. */
+function updateTarget() {
+  document.body.classList.toggle('noOperator', !operatorOn);
+  $('targetOperator').classList.toggle('on', view === 'projects');
+  $('targetProject').classList.toggle('on', view === 'project');
+  $('targetProjectName').textContent = current || 'project';
+  const p = projects.find(x => x.name === current);
+  $('targetDot').className = 'dot' + (p && p.alive ? ' on' : '');
+  const inst = instancesOf(current).find(i => i.id === currentAgent());
+  $('dot').className = 'dot' + (inst && inst.alive ? ' on' : '');
+  $('termRow').textContent = 'Terminal' + agentSuffix() + ' \u2922';
+  renderAgentSeg();
+  $('clearProject').title = 'New chat with ' + (current || 'this project');
+  $('newchat').title = 'New chat with ' +
+    (view === 'projects' ? 'the operator' : (current || 'this project')) +
+    ' — clears its transcript and starts a fresh session';
+  $('input').placeholder =
+    view === 'projects' ? 'Ask the operator…' :
+    dest === 'project'  ? 'Send straight to ' + (current ? current + agentSuffix() : 'the agent') + '…'
+                        : 'Ask about ' + (current ? current + agentSuffix() : 'this project') + '…';
+}
+$('targetOperator').onclick = () => setView('projects');
+$('targetProject').onclick = () => setView('project');
+
+/* ---------- voice state strip ---------- */
+let voiceState = null;
+function setVoiceState(s) {
+  voiceState = s;
+  const el = $('voiceState');
+  if (!s) { el.classList.remove('show'); return; }
+  $('voiceStateText').textContent =
+    s === 'listening'    ? 'Listening for ' + targetName() + '… tap mic to stop' :
+    s === 'transcribing' ? 'Transcribing…' :
+    s === 'thinking'     ? targetName() === 'the operator' ? 'The operator is thinking…'
+                                                              : targetName() + ' is thinking…'
+                         : 'Speaking… tap mic to interrupt';
+  el.classList.add('show');
+}
+function voiceStateIs(s) { return voiceState === s; }
+
+/* ---------- chat rendering ---------- */
+/* Which column's transcript. On a phone only one is on screen; on a desktop
+   both are, and each keeps its own conversation. */
+function chatEl(v) { return $((v || view) === 'projects' ? 'chatOperator' : 'chatProject'); }
+
+function addBubble(cls, html, tag, v) {
+  const box = chatEl(v);
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  d.innerHTML = (tag ? '<span class="tag">' + esc(tag) + '</span>' : '') + html;
+  box.appendChild(d);
+  box.scrollTop = box.scrollHeight;
+  return d;
+}
+function addAdvisorBubble(text, v) {
+  const d = addBubble('advisor', md(text), null, v);
+  const btns = document.createElement('div');
+  btns.className = 'bubbleBtns';
+  const say = document.createElement('button');
+  say.className = 'sayBtn';
+  say.textContent = '🔊';
+  say.onclick = () => { unlockTTS(); stopSpeaking(); speakText(text); };
+  btns.appendChild(say);
+  const block = lastCodeBlock(text);
+  if (block) {
+    const b = document.createElement('button');
+    b.className = 'useBtn';
+    b.textContent = '↳ Use as prompt → Project';
+    b.onclick = () => {
+      $('input').value = block;
+      autogrow();
+      setDest('project');
+      $('input').focus();
+    };
+    btns.appendChild(b);
+  }
+  d.appendChild(btns);
+  const box = chatEl(v);
+  box.scrollTop = box.scrollHeight;
+  return d;
+}
+function sentTag(agent) { return '➤ sent to ' + (agent ? agentShort(agent) : 'project'); }
+function addSummaryBubble(text, proj, v, agent) {
+  const who = agent && agent !== DEFAULT_AGENT ? ' · ' + agentShort(agent) : '';
+  const d = addBubble('summary', md(text),
+    proj ? '⤺ ' + proj + who : '⤺ ' + (agent ? agentShort(agent) + ' reply' : 'agent reply'), v);
+  if (proj) d.querySelector('.tag').classList.add('proj');
+  const btns = document.createElement('div');
+  btns.className = 'bubbleBtns';
+  const say = document.createElement('button');
+  say.className = 'sayBtn';
+  say.textContent = '🔊';
+  say.onclick = () => { unlockTTS(); stopSpeaking(); speakText(text); };
+  btns.appendChild(say);
+  d.appendChild(btns);
+  const box = chatEl(v);
+  box.scrollTop = box.scrollHeight;
+  return d;
+}
+function renderHistory(msgs, v) {
+  chatEl(v).innerHTML = '';
+  for (const m of msgs) {
+    if (m.role === 'advisor') addAdvisorBubble(m.text, v);
+    else if (m.role === 'sent') addBubble('sent', md(m.text), sentTag(m.agent), v);
+    else if (m.role === 'summary') addSummaryBubble(m.text, null, v, m.agent);
+    else addBubble('user', inline(m.text),
+      m.mode === 'status' ? '📊 status' : m.mode === 'brainstorm' ? '💡 brainstorm' : null, v);
+  }
+}
+
+/* ---------- agent reply summaries ---------- */
+/* After a prompt goes to the agent the server watches its pane, and once the
+   agent settles it posts a short summary of what it did. Poll for that instead
+   of making the user read the terminal. */
+let summarizeOn = true, lastSummaryTs = 0, updTimer = null, pendingSummary = null;
+
+function showSummaryPending() {
+  if (pendingSummary) return;
+  pendingSummary = addBubble('summary pending', 'agent working');
+}
+function clearSummaryPending() {
+  if (pendingSummary) { pendingSummary.remove(); pendingSummary = null; }
+}
+function startUpdates() {
+  if (!updTimer) updTimer = setInterval(pollUpdates, 4000);
+}
+function stopUpdates() {
+  clearInterval(updTimer);
+  updTimer = null;
+}
+async function pollUpdates() {
+  if (!current) return;      // both columns can be up at once on a desktop
+  let d;
+  try {
+    d = await api('/api/updates?project=' + encodeURIComponent(current) +
+                  '&after=' + lastSummaryTs);
+  } catch (e) {
+    return;  // transient — keep polling
+  }
+  for (const m of (d.summaries || [])) {
+    lastSummaryTs = Math.max(lastSummaryTs, m.ts || 0);
+    clearSummaryPending();
+    pauseMusicForSummary();  // clear the air for the spoken summary
+    addSummaryBubble(m.text, null, undefined, m.agent);
+    // Read it out only if nothing else is using the voice right now.
+    // Both columns can show the same summary; only the focused one reads it out.
+    if (speakOn && view === 'project' && !busy && !listening && !ttsActive) speakText(m.text);
+  }
+  if (d.watching) { showSummaryPending(); startUpdates(); }
+  else { clearSummaryPending(); stopUpdates(); }
+}
+function watchForSummary() {
+  if (!summarizeOn) return false;
+  showSummaryPending();
+  startUpdates();
+  return true;
+}
+
+/* ---------- home: every agent, one card each ---------- */
+/* The first screen: what each running agent is doing, and which ones are
+   waiting on you. States come from hooks and the pane monitor (events.py);
+   the one-line summaries are a small local model's and are always labelled as
+   such, with the full message one tap away. Polled, and only re-rendered when
+   something changed, so an open card stays open. */
+let homeTimer = null, homeSig = '', homeSkew = 0, homeIdleOpen = false;
+let homeCpu = null, cpuOpen = false;
+try { cpuOpen = localStorage.getItem('vp.home.cpu') === '1'; } catch (e) {}
+let lastServices = null;
+try { homeIdleOpen = localStorage.getItem('vp.home.idle') === '1'; } catch (e) {}
+const homeOpen = new Set();        // cards showing their details
+const homePanes = {};              // card -> terminal text, while shown
+const eventCache = {};             // event id -> /api/event
+const SETTLED = ['needs_input', 'completed', 'error'];
+const STATE_LABEL = { needs_input: 'needs you', completed: 'done', error: 'error',
+                      working: 'working', starting: 'starting', idle: 'idle', offline: 'offline',
+                      new: 'new' };
+const GUESS_LABEL = { needs_input: 'asking you something', completed: 'finished',
+                      error: 'failed' };
+
+function startHome() { if (!homeTimer) homeTimer = setInterval(loadHome, 5000); }
+function stopHome() { clearInterval(homeTimer); homeTimer = null; }
+
+function ago(t) {
+  const s = Math.max(0, Date.now() / 1000 + homeSkew - t);
+  return s < 60 ? 'now' : s < 3600 ? Math.floor(s / 60) + 'm'
+       : s < 86400 ? Math.floor(s / 3600) + 'h' : Math.floor(s / 86400) + 'd';
+}
+function fmtTokens(n) {
+  n = Number(n || 0);
+  if (n >= 1e9) return (n / 1e9).toFixed(n >= 1e10 ? 0 : 1) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'k';
+  return String(n);
+}
+function untilReset(iso) {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '';
+  const s = Math.max(0, (t - Date.now()) / 1000 - homeSkew);
+  if (s <= 0) return 'now';
+  if (s < 3600) return Math.ceil(s / 60) + 'm';
+  if (s < 86400) {
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return m ? h + 'h ' + m + 'm' : h + 'h';
+  }
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+  return h ? d + 'd ' + h + 'h' : d + 'd';
+}
+function fmtInstUsage(u, agent) {
+  if (!u || !u.d7 || !u.d7.turns) return '';
+  const parts = [];
+  if (u.h5 && u.h5.turns)
+    parts.push('5h: ' + fmtTokens(u.h5.total_tokens) + ' tok (' + u.h5.turns + 't)');
+  const share = u.share_7d_pct >= 0.5 ? ' · ' + Math.round(u.share_7d_pct) + '% of 7d ' + agentShort(agent) : '';
+  parts.push('7d: ' + fmtTokens(u.d7.total_tokens) + ' tok' + share);
+  return parts.join(' · ');
+}
+function fmtProjUsage(u) {
+  if (!u) return '';
+  const parts = [];
+  for (const aid of Object.keys(u)) {
+    const entry = u[aid], label = agentShort(aid);
+    if (!entry || !entry.d7 || !entry.d7.turns) continue;
+    const sh = entry.share_7d_pct >= 1 ? ' (' + Math.round(entry.share_7d_pct) + '%)' : '';
+    parts.push(label + ' ' + fmtTokens(entry.d7.total_tokens) + sh);
+  }
+  return parts.length ? '7d: ' + parts.join(' · ') : '';
+}
+function renderServices(services) {
+  if (!services || !Object.keys(services).length) return null;
+  const grid = document.createElement('div');
+  grid.className = 'ugrid';
+  for (const key of ['claude', 'agy']) {
+    const s = services[key];
+    if (!s) continue;
+    const card = document.createElement('div');
+    card.className = 'ucard';
+    const cred = s.credits || {};
+    let credHtml = '';
+    if (cred.kind === 'usd' && cred.remaining_dollars !== null && cred.remaining_dollars !== undefined) {
+      const rem = Number(cred.remaining_dollars), lim = Number(cred.limit_dollars || 0);
+      const pct = lim > 0 ? (rem / lim) * 100 : 100;
+      const cls = pct < 5 ? ' low' : pct < 20 ? ' warn' : '';
+      const rst = cred.resets_at ? ' · ' + untilReset(cred.resets_at) : '';
+      credHtml = '<span class="ucred' + cls + '" title="Promotional / grant credit balance">$' +
+                 rem.toFixed(2) + (lim ? ' / $' + lim.toFixed(0) : '') + ' left' + esc(rst) + '</span>';
+    } else if (cred.kind === 'credits' && cred.remaining_credits !== null && cred.remaining_credits !== undefined) {
+      const rem = Number(cred.remaining_credits);
+      credHtml = '<span class="ucred' + (rem === 0 ? ' warn' : '') + '">' + rem + ' credits</span>';
+    }
+    let h = '<div class="uhead"><span class="uname">' + esc(s.label || key) + '</span>' +
+            credHtml +
+            (key === 'agy' ? '<button class="uref" data-act="uref" title="Refresh live service quotas">&#10227;</button>' : '') +
+            '</div>';
+    const buckets = s.buckets || [];
+    if (buckets.length) {
+      h += '<div class="ubars">';
+      for (const b of buckets) {
+        const rem = Math.max(0, Math.min(100, Number(b.remaining_pct || 0)));
+        const cls = rem < 10 ? ' low' : rem < 25 ? ' warn' : '';
+        const rst = untilReset(b.resets_at);
+        h += '<div class="urow">' +
+             '<span class="ulbl" title="' + esc(b.name || b.label) + '">' + esc(b.label) + '</span>' +
+             '<div class="ubar"><div class="ufill' + cls + '" style="width:' + rem + '%"></div></div>' +
+             '<span class="uval">' + Math.round(rem) + '% left' +
+             (rst ? '<span class="ureset">· ' + esc(rst) + '</span>' : '') + '</span></div>';
+      }
+      h += '</div>';
+    }
+    const u5 = (s.usage && s.usage.h5) || {}, u7 = (s.usage && s.usage.d7) || {};
+    const foot = [];
+    if (u5.turns) foot.push('5h: ' + fmtTokens(u5.total_tokens) + ' tok (' + fmtTokens(u5.output_tokens) + ' out)');
+    if (u7.turns) foot.push('7d: ' + fmtTokens(u7.total_tokens) + ' tok (' + fmtTokens(u7.output_tokens) + ' out)');
+    if (cred.extra_usage && cred.extra_usage.disabled_reason === 'out_of_credits')
+      foot.push('extra credits: exhausted');
+    if (foot.length) h += '<div class="ufoot"><span>' + esc(foot.join(' · ')) + '</span></div>';
+    card.innerHTML = h;
+    const refBtn = card.querySelector('[data-act=uref]');
+    if (refBtn) {
+      refBtn.onclick = async () => {
+        refBtn.disabled = true;
+        try {
+          const r = await api('/api/usage/refresh', { body: {} });
+          if (r.services) {
+            lastServices = r.services;
+            homeSig = '';
+            if (view === 'home') await loadHome(true);
+            else await loadOverview();
+          }
+          toast('Service quotas refreshed');
+        } catch (e) { toast(e.message); }
+        refBtn.disabled = false;
+      };
+    }
+    grid.appendChild(card);
+  }
+  return grid;
+}
+/* An excerpt as one plain line: the card is a glance, the details are below. */
+function plainLine(t, n = 170) {
+  const l = (t || '').replace(/```[\s\S]*?(```|$)/g, ' ').replace(/[*`#>]/g, '')
+                     .replace(/\s+/g, ' ').trim();
+  return l.length > n ? l.slice(0, n).replace(/\s\S*$/, '') + '…' : l;
+}
+
+async function loadHome(force) {
+  let d;
+  try { d = await api('/api/instances'); }
+  catch (e) {
+    if (!homeSig) $('homeInner').innerHTML = '<p class="hnote">' + esc(e.message) + '</p>';
+    return;
+  }
+  homeSkew = d.now - Date.now() / 1000;
+  if (d.services) lastServices = d.services;
+  homeCpu = d.cpu || null;
+  const sig = JSON.stringify([d.instances, d.services, cpuSig(homeCpu)]);
+  if (force || sig !== homeSig) { homeSig = sig; renderHome(d.instances, d.services); }
+  else for (const el of document.querySelectorAll('#home .atime'))
+    el.textContent = ago(+el.dataset.since);
+}
+
+function renderHome(list, services) {
+  const box = $('homeInner');
+  const keep = box.parentElement.scrollTop;
+  box.innerHTML = '';
+  // Pinned cards keep their own section at the top, whatever their state.
+  const pinned = list.filter(i => i.pinned);
+  const need = list.filter(i => !i.pinned && SETTLED.includes(i.state));
+  const work = list.filter(i => !i.pinned && (i.state === 'working' || i.state === 'starting'));
+  const fresh = list.filter(i => !i.pinned && i.state === 'new');
+  const rest = list.filter(i => !i.pinned && !need.includes(i) && !work.includes(i) && !fresh.includes(i));
+  const section = (title, items, empty) => {
+    const h = document.createElement('div');
+    h.className = 'hsec';
+    h.textContent = title + (items.length ? ' · ' + items.length : '');
+    box.appendChild(h);
+    if (!items.length) {
+      box.insertAdjacentHTML('beforeend', '<p class="hnote">' + empty + '</p>');
+      return;
+    }
+    const g = document.createElement('div');
+    g.className = 'hgrid';
+    items.forEach(i => g.appendChild(homeCard(i)));
+    box.appendChild(g);
+  };
+  const badge = $('needBadge');
+  const needing = need.length + pinned.filter(i => SETTLED.includes(i.state)).length;
+  badge.hidden = !needing;
+  badge.textContent = needing;
+  if (pinned.length) section('Pinned', pinned, '');
+  const sgrid = renderServices(services || lastServices);
+  if (sgrid) box.appendChild(sgrid);
+  const cpanel = renderCpu(homeCpu);
+  if (cpanel) box.appendChild(cpanel);
+  section('Needs you', need, 'Nothing is waiting on you.');
+  if (fresh.length) section('New', fresh, '');
+  section('Working', work, 'No agent is working right now.');
+  if (rest.length) {
+    const det = document.createElement('details');
+    det.open = homeIdleOpen;
+    det.ontoggle = () => {
+      homeIdleOpen = det.open;
+      try { localStorage.setItem('vp.home.idle', det.open ? '1' : '0'); } catch (e) {}
+    };
+    det.innerHTML = '<summary class="hsec">Idle · ' + rest.length + '</summary>';
+    const g = document.createElement('div');
+    g.className = 'hgrid';
+    rest.forEach(i => g.appendChild(homeCard(i)));
+    det.appendChild(g);
+    box.appendChild(det);
+  }
+  box.parentElement.scrollTop = keep;
+}
+
+/* ---------- the CPU queue ---------- */
+/* reserve/'s book, as /api/instances carries it: a summary line that opens
+   to the running and waiting jobs, their controls, and what finished lately. */
+function cpuSig(c) {
+  if (!c || c.error) return c && c.error;
+  return [c.paused, c.keep_free, c.capacity,
+          c.entries.map(e => [e.id, e.state, e.cores, e.position, e.stop]),
+          (c.history || []).slice(0, 6).map(h => h.id)];
+}
+/* What an agent's card says about its project's place in the queue. Only the
+   project's default agent says it: the book knows projects, not agents. */
+function cpuFor(i) {
+  const c = homeCpu;
+  if (!c || c.error || i.agent !== DEFAULT_AGENT) return '';
+  const mine = c.entries.filter(e => e.project === i.project);
+  const run = mine.filter(e => e.state === 'granted').reduce((n, e) => n + e.cores, 0);
+  const wait = mine.filter(e => e.state === 'waiting');
+  const out = [];
+  if (run) out.push('<span class="ch">▣ ' + run + ' cores booked</span>');
+  if (wait.length) out.push('<span class="cq">⏳ waiting for ' +
+    wait.reduce((n, e) => n + e.cores, 0) + ' cores (#' + Math.min(...wait.map(e => e.position)) +
+    (c.paused ? ', queue paused' : '') + ')</span>');
+  return out.join(' · ');
+}
+async function cpuPost(body) {
+  try { await api('/api/cpu', { body }); }
+  catch (e) { toast(e.message); }
+  await loadHome(true);
+}
+function renderCpu(c) {
+  if (!c) return null;
+  const d = document.createElement('details');
+  d.className = 'cpu';
+  d.open = cpuOpen;
+  d.ontoggle = () => {
+    cpuOpen = d.open;
+    try { localStorage.setItem('vp.home.cpu', d.open ? '1' : '0'); } catch (e) {}
+  };
+  if (c.error) {
+    d.innerHTML = '<summary>CPU queue <span class="cwait">' + esc(c.error) + '</span></summary>';
+    return d;
+  }
+  const run = c.entries.filter(e => e.state === 'granted');
+  const wait = c.entries.filter(e => e.state === 'waiting');
+  const cores = n => n + ' core' + (n === 1 ? '' : 's');
+  let h = '<summary><span>CPU</span><span class="cbar">' +
+    run.map(e => '<span' + (e.stop ? ' class="stop"' : '') + ' style="width:' +
+                 (100 * e.cores / c.capacity) + '%" title="' + esc(e.project + ': ' + e.cores) + '"></span>').join('') +
+    '</span><span class="cnum">' + c.booked + '/' + c.capacity + '</span>' +
+    (wait.length ? '<span class="cwait">' + wait.length + ' waiting</span>' : '') +
+    (c.paused ? '<span class="cpaused">paused</span>' : '') + '</summary>';
+  h += '<div class="ctl"><button data-c="pause">' + (c.paused ? '▶ Resume' : '⏸ Pause') + '</button>' +
+       '<span class="hnote">kept free</span><button data-c="kf-">−</button><span class="n">' + c.keep_free +
+       '</span><button data-c="kf+">+</button><span class="hnote">load ' + Math.round(c.load) + ' on ' +
+       c.cores + (c.pressure != null ? ' · pressure ' + Math.round(c.pressure) + '%' : '') + '</span></div>';
+  const row = (e, cls, btns, sub) =>
+    '<div class="crow ' + cls + '"><span class="ccores">' + cores(e.cores) + '</span>' +
+    '<span class="cwhat"><b>' + esc(e.project) + '</b> ' + esc(e.label || '') +
+    '<div title="' + esc(e.command || '') + '">' + sub + esc(e.command || '') + '</div></span>' +
+    (btns ? '<span class="cbtns">' + btns + '</span>' : '') + '</div>';
+  const since = t => '<span class="atime" data-since="' + t + '">' + ago(t) + '</span> · ';
+  h += '<div class="csec">Running</div>' + (run.length ? run.map(e => row(e, 'run',
+         e.stop ? '<span class="hnote">stopping…</span>' : '<button class="x" data-c="stop" data-id="' + e.id + '">Stop</button>',
+         since(e.granted) + (e.where && e.where !== 'host' ? 'in ' + esc(e.where) + ' · ' : ''))).join('')
+       : '<p class="hnote">Nothing booked.</p>');
+  h += '<div class="csec">Waiting</div>' + (wait.length ? wait.map((e, n) => row(e, 'wait',
+         (n ? '<button data-c="front" data-id="' + e.id + '">Front</button>' : '') +
+         '<button data-c="cores" data-id="' + e.id + '" data-n="' + e.cores + '">Cores</button>' +
+         '<button class="x" data-c="cancel" data-id="' + e.id + '">Cancel</button>',
+         '#' + e.position + ' · ' + since(e.requested))).join('')
+       : '<p class="hnote">Nobody waiting.</p>');
+  const HOW = { done: 'done', stopped: 'stopped', cancelled: 'cancelled', lapsed: 'client vanished' };
+  const hist = (c.history || []).slice(0, 6);
+  if (hist.length) h += '<div class="csec">Finished lately</div>' + hist.map(x => row(x, 'hist', '',
+       (HOW[x.how] || x.how) + (x.code ? ' · exit ' + x.code : '') + ' · ' + since(x.ended))).join('');
+  d.innerHTML = h;
+  d.querySelectorAll('button[data-c]').forEach(b => b.onclick = ev => {
+    ev.preventDefault();
+    const id = b.dataset.id, e = c.entries.find(x => x.id === id);
+    switch (b.dataset.c) {
+      case 'pause': return cpuPost({ paused: !c.paused });
+      case 'kf-': return cpuPost({ keep_free: c.keep_free - 1 });
+      case 'kf+': return cpuPost({ keep_free: c.keep_free + 1 });
+      case 'front': case 'cancel': return cpuPost({ verb: b.dataset.c, id });
+      case 'cores': {
+        const n = parseInt(prompt('Cores for ' + e.project + (e.label ? ' (' + e.label + ')' : '') + '?', b.dataset.n), 10);
+        return n > 0 ? cpuPost({ verb: 'cores', id, cores: n }) : null;
+      }
+      case 'stop':
+        if (confirm('Stop ' + e.project + "'s " + cores(e.cores) + ' job?\n\n' + (e.label || e.command) +
+                    '\n\nIts command gets SIGTERM, then SIGKILL if it lingers.'))
+          return cpuPost({ verb: 'stop', id });
+    }
+  });
+  return d;
+}
+
+function homeCard(i) {
+  const key = i.project + '/' + i.agent;
+  const m = i.message, s = m && m.summary;
+  const working = i.state === 'working' || i.state === 'starting';
+  const fresh = i.state === 'new';   // a project added lately, never run
+  const settled = SETTLED.includes(i.state) || fresh;
+  const quiet = !settled && !working;
+  const open = homeOpen.has(key);
+  const c = document.createElement('div');
+  c.className = 'acard st-' + i.state + (quiet ? ' quiet' : '');
+  const btns = '<div class="abtns">' +
+       (settled ? '<button class="dismiss" data-act="dismiss">&#10003; Seen</button>' : '') +
+       '<button class="voice needsVoice" data-act="voice" title="Talk about ' + esc(i.project) + ' (' +
+       esc(agentShort(i.agent)) + ') by voice">&#127908; Voice</button>' +
+       (i.alive && !quiet ? '<button data-act="term">Terminal</button>' : '') +
+       (i.web ? '<a target="_blank" rel="noopener" href="' + esc(i.web.url || webUrl(i.web)) + '"' +
+                (i.web.up ? '' : ' title="not running"') + '>web' + (i.web.up ? '' : ' ○') + ' &#8599;</a>' : '') +
+       '<button data-act="more">' + (open ? 'Less' : 'More') + '</button>' +
+       '<button class="pin' + (i.pinned ? ' on' : '') + '" data-act="pin" title="' +
+       (i.pinned ? 'Unpin' : 'Pin to the top') + '">&#128204;</button></div>';
+  let h = '<div class="ahead">' +
+          (i.state === 'idle' ? '' : '<span class="apill">' + esc(STATE_LABEL[i.state] || i.state) + '</span>') +
+          '<span class="aname">' + esc(i.project) + '</span><span class="achip">' +
+          esc(agentShort(i.agent)) + '</span>' +
+          (quiet && i.usage && i.usage.d7 && i.usage.d7.turns
+            ? '<span class="uchip" title="' + esc(fmtInstUsage(i.usage, i.agent)) + '">' +
+              esc(fmtTokens(i.usage.d7.total_tokens)) +
+              (i.usage.share_7d_pct >= 1 ? ' · ' + Math.round(i.usage.share_7d_pct) + '%' : '') + '</span>'
+            : '') +
+          (quiet ? btns : (i.since || i.recent) ? '<span class="atime" data-since="' + (i.since || i.recent) + '">' + ago(i.since || i.recent) + '</span>' : '') +
+          '</div>';
+  const meta = [];
+  if (i.aliases.length) meta.push('also ' + i.aliases.join(', '));
+  if (i.background_tasks) meta.push('⚙ ' + i.background_tasks + ' in background');
+  const q = cpuFor(i);
+  const uline = !quiet ? fmtInstUsage(i.usage, i.agent) : '';
+  if (uline) meta.push(uline);
+  if (!i.alive && !fresh) meta.push('session gone');
+  else if (!i.hooked && !quiet) meta.push('read from the terminal');
+  if (meta.length || q) h += '<div class="ameta">' + (q ? q + (meta.length ? ' · ' : '') : '') +
+                             esc(meta.join(' · ')) + '</div>';
+  if (i.reason) h += '<div class="asum"><span class="alabel">waiting on</span>' + esc(i.reason) + '</div>';
+  if (m) {
+    let label, text;
+    if (s) {
+      const by = s.source === 'sonnet' ? 'sonnet' : 'granite';
+      label = working || quiet ? 'last turn · ' + by : by === 'sonnet' ? 'summary · sonnet' : 'rough summary · granite';
+      text = s.text;
+    } else {
+      label = working || quiet ? 'last turn' : m.summary_pending ? 'last message · summarizing…' : 'last message';
+      text = plainLine(m.excerpt);
+    }
+    h += '<div class="asum' + (working ? ' old' : '') + '"><span class="alabel">' + label + '</span>' +
+         esc(text) + '</div>';
+    // The state is the rules' call; the model's reading is shown only where
+    // it differs, as a nudge to look.
+    if (s && s.source !== 'sonnet' && settled && s.status_guess && s.status_guess !== i.state)
+      h += '<div class="ahint">Granite reads it as ' + esc(GUESS_LABEL[s.status_guess] || s.status_guess) + '</div>';
+  } else if (fresh) {
+    h += '<div class="asum old"><span class="alabel">new project · no agent started yet</span></div>';
+  } else if (!i.reason && !quiet) {
+    h += '<div class="asum old"><span class="alabel">no finished turn on record</span></div>';
+  }
+  h += (quiet ? '' : btns) + '<div class="adetail"' + (open ? '' : ' hidden') + '></div>';
+  c.innerHTML = h;
+  const detail = c.querySelector('.adetail');
+  if (open) fillDetail(detail, i);
+  c.querySelector('[data-act=voice]').onclick = () => {
+    try { localStorage.setItem('vp.agent.' + i.project, i.agent); } catch (e) {}
+    setView('project', i.project);
+  };
+  const term = c.querySelector('[data-act=term]');
+  if (term) term.onclick = () => openTerminal(i.project, i.agent);
+  const dis = c.querySelector('[data-act=dismiss]');
+  if (dis) dis.onclick = async () => {
+    dis.disabled = true;
+    try { await api('/api/instances/dismiss', { body: { project: i.project, agent: i.agent } }); }
+    catch (e) { toast(e.message); dis.disabled = false; return; }
+    await loadHome(true);
+  };
+  const pin = c.querySelector('[data-act=pin]');
+  pin.onclick = async () => {
+    pin.disabled = true;
+    try { await api('/api/pin', { body: { project: i.project, view: 'agents', pinned: !i.pinned } }); }
+    catch (e) { toast(e.message); pin.disabled = false; return; }
+    await loadHome(true);
+  };
+  const more = c.querySelector('[data-act=more]');
+  more.onclick = () => {
+    const show = detail.hidden;
+    detail.hidden = !show;
+    more.textContent = show ? 'Less' : 'More';
+    if (show) { homeOpen.add(key); fillDetail(detail, i); }
+    else { homeOpen.delete(key); delete homePanes[key]; }
+  };
+  return c;
+}
+
+/* ---------- the full-screen terminal ---------- */
+/* One agent's live terminal over the whole page — a tmux client over
+   /ws/attach, as the desktop window's tabs are VTE ones. The bar switches
+   agent; ‹ (or the phone's back gesture) closes it, which detaches: the
+   agent keeps running. Sized to the visual viewport, so the soft keyboard
+   shrinks the terminal rather than covering it. */
+let termProject = null, termPushed = false;
+
+async function openTerminal(project, agent) {
+  try { localStorage.setItem('vp.agent.' + project, agent); } catch (e) {}
+  termProject = project;
+  $('termTitle').textContent = project;
+  $('termView').hidden = false;
+  document.body.classList.add('termOpen');
+  if (!termPushed) { history.pushState({ term: 1 }, ''); termPushed = true; }
+  sizeTermView();
+  showTermAgent(agent);
+  // The toggle wants every agent's state, which the Projects tab may not have.
+  if (!reposList.some(p => p.name === project)) {
+    try { reposList = (await api('/api/registry')).projects; } catch (e) {}
+  }
+  renderTermAgents();
+}
+
+function renderTermAgents() {
+  const p = reposList.find(x => x.name === termProject), seg = $('termAgents');
+  seg.innerHTML = '';
+  if (!p) return;
+  const on = live ? live.agent : repoAgent(p);
+  for (const [id, st] of Object.entries(p.agents)) {
+    const b = document.createElement('button');
+    b.className = id === on ? 'on' : '';
+    b.innerHTML = '<span class="dot' + (st.up ? ' on' : '') + '"></span>' + esc(agentShort(id));
+    b.onclick = () => {
+      try { localStorage.setItem('vp.agent.' + termProject, id); } catch (e) {}
+      showTermAgent(id);
+      renderTermAgents();
+    };
+    seg.appendChild(b);
+  }
+}
+
+function showTermAgent(agent) {
+  if (live && live.agent === agent && live.project === termProject) return;
+  if (live) { live.dispose(); live = null; }
+  const host = $('termHost');
+  host.innerHTML = '';
+  const p = reposList.find(x => x.name === termProject);
+  if (p && p.agents[agent] && !p.agents[agent].up) {
+    // Not running: say so, with the one thing to do about it.
+    host.innerHTML = '<div class="tnote">' + esc(agentShort(agent)) + ' isn\u2019t running in ' +
+                     esc(termProject) + '.<br><button class="ract start">Start it</button></div>';
+    host.querySelector('button').onclick = async e => {
+      e.target.disabled = true;
+      try { await api('/api/control', { body: { action: 'start_agent', project: termProject, agent } }); }
+      catch (err) { toast(err.message); e.target.disabled = false; return; }
+      try { reposList = (await api('/api/registry')).projects; } catch (err) {}
+      showTermAgent(agent);
+      renderTermAgents();
+    };
+    return;
+  }
+  live = new LiveTerm(termProject, agent);
+  host.appendChild(live.host);
+  live.mounted();
+}
+
+function closeTerminal(fromHistory) {
+  if ($('termView').hidden) return;
+  if (live) { live.dispose(); live = null; }
+  $('termHost').innerHTML = '';
+  $('termView').hidden = true;
+  document.body.classList.remove('termOpen');
+  termProject = null;
+  if (termPushed && !fromHistory) { termPushed = false; history.back(); }
+  termPushed = false;
+  if (view === 'repos') loadRepos(true);
+}
+$('termClose').onclick = () => closeTerminal(false);
+addEventListener('popstate', () => closeTerminal(true));
+
+function sizeTermView() {
+  const vv = window.visualViewport, el = $('termView');
+  if (!vv || el.hidden) return;
+  el.style.top = vv.offsetTop + 'px';
+  el.style.height = vv.height + 'px';
+  if (live) live.fit();
+}
+if (window.visualViewport) {
+  visualViewport.addEventListener('resize', sizeTermView);
+  visualViewport.addEventListener('scroll', sizeTermView);
+}
+
+/* The browser terminal (terminal/), opened on this agent's session: it
+   switches to a tab already showing it, or attaches a new one. */
+function terminalUrl(project, agent) {
+  const u = new URL(webUrl(terminalWeb));
+  u.searchParams.set('attach', project);
+  u.searchParams.set('agent', agent);
+  return u.toString();
+}
+
+/* The full final message, where it came from, and the live terminal — what
+   the one-liner was made from, so it can be checked. */
+async function fillDetail(box, i) {
+  const key = i.project + '/' + i.agent, m = i.message;
+  let ev = m && eventCache[m.event];
+  if (m && !ev) {
+    box.innerHTML = '<p class="hnote pending">loading</p>';
+    try { ev = eventCache[m.event] = await api('/api/event?id=' + m.event); }
+    catch (e) { box.innerHTML = '<p class="hnote">' + esc(e.message) + '</p>'; return; }
+  }
+  box.innerHTML = '';
+  if (i.usage && i.usage.d7 && i.usage.d7.turns) {
+    const u5 = i.usage.h5 || {}, u1 = i.usage.d1 || {}, u7 = i.usage.d7 || {};
+    const rows = [
+      ['5h', u5], ['24h', u1], ['7d', u7]
+    ].filter(([, w]) => w.turns).map(([lbl, w]) =>
+      lbl + ': ' + w.turns + ' turns · ' + fmtTokens(w.total_tokens) + ' tok (' +
+      fmtTokens(w.input_tokens + (w.cache_write_tokens || 0)) + ' in, ' +
+      fmtTokens(w.cache_read_tokens) + ' cache, ' + fmtTokens(w.output_tokens) + ' out)'
+    );
+    box.insertAdjacentHTML('beforeend',
+      '<div class="apath" style="margin:0 0 8px">' + esc(rows.join('  |  ')) + '</div>');
+  }
+  if (ev) {
+    const when = new Date(ev.ts * 1000).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+    box.insertAdjacentHTML('beforeend',
+      '<span class="alabel">final message · ' + esc(when) + '</span>' +
+      '<div class="amsg">' + md(ev.message || '(empty)') + '</div>' +
+      (ev.transcript_path ? '<div class="apath">' + esc(ev.transcript_path) + '</div>' : ''));
+  }
+  const btns = document.createElement('div');
+  btns.className = 'abtns';
+  if (ev && !(ev.summary && ev.summary.source === 'sonnet')) {
+    const b = document.createElement('button');
+    b.textContent = 'Ask Sonnet for a summary';
+    b.onclick = async () => {
+      b.disabled = true;
+      b.textContent = 'Asking Sonnet…';
+      try { await api('/api/event/sonnet', { body: { id: m.event } }); }
+      catch (e) { toast(e.message); b.disabled = false; b.textContent = 'Ask Sonnet for a summary'; return; }
+      delete eventCache[m.event];
+      await loadHome(true);
+    };
+    btns.appendChild(b);
+  }
+  if (ev && ev.transcript_path && navigator.clipboard) {
+    const b = document.createElement('button');
+    b.textContent = 'Copy path';
+    b.onclick = () => navigator.clipboard.writeText(ev.transcript_path)
+      .then(() => toast('Transcript path copied'), () => toast('Copy failed'));
+    btns.appendChild(b);
+  }
+  if (i.alive) {
+    const b = document.createElement('button');
+    const pre = document.createElement('pre');
+    pre.className = 'term';
+    const show = text => {
+      pre.textContent = text || '(empty)';
+      if (!pre.isConnected) box.appendChild(pre);
+      pre.scrollTop = pre.scrollHeight;
+    };
+    b.textContent = homePanes[key] !== undefined ? 'Refresh terminal' : 'Terminal';
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        const d = await api('/api/pane?project=' + encodeURIComponent(i.project) +
+                            '&agent=' + encodeURIComponent(i.agent) + '&lines=80');
+        homePanes[key] = d.text;
+        show(d.text);
+        b.textContent = 'Refresh terminal';
+      } catch (e) { toast(e.message); }
+      b.disabled = false;
+    };
+    btns.appendChild(b);
+    box.appendChild(btns);
+    if (homePanes[key] !== undefined) show(homePanes[key]);
+  } else {
+    box.appendChild(btns);
+  }
+}
+
+/* ---------- Projects: the registry, as an accordion ---------- */
+/* Every project, running or not, as the desktop window's Projects view has
+   it: a monorepo's worktrees together under the repository's name, each with
+   its branch, whether it is a worktree, its subdirectory and its tickets.
+   One project is open at a time. Open, it has a toggle for which agent, and
+   that agent's Terminal (full screen, below), Talk and Stop — or Start when
+   it isn't running. */
+let reposTimer = null, reposSig = '', reposList = [];
+let openProject = localStorage.getItem('vp.repos.open') || null;
+let live = null;                    // the one LiveTerm, while the terminal is up
+
+function startRepos() { if (!reposTimer) reposTimer = setInterval(() => loadRepos(), 5000); }
+function stopRepos() { clearInterval(reposTimer); reposTimer = null; }
+
+async function loadRepos(force) {
+  let d;
+  try { d = await api('/api/registry'); }
+  catch (e) {
+    if (!reposSig) $('reposList').innerHTML = '<p class="hnote">' + esc(e.message) + '</p>';
+    return;
+  }
+  reposList = d.projects;
+  const sig = JSON.stringify(d.projects);
+  if (force || sig !== reposSig) { reposSig = sig; renderRepos(d.projects); }
+}
+$('repoFilter').addEventListener('input', () => {
+  $('repoFilterClear').hidden = !$('repoFilter').value;
+  renderRepos(reposList);
+});
+$('repoFilterClear').addEventListener('click', () => {
+  $('repoFilter').value = '';
+  $('repoFilter').dispatchEvent(new Event('input'));
+  $('repoFilter').focus();
+});
+
+function ticketHref(key) { return jiraUrl ? jiraUrl + '/browse/' + encodeURIComponent(key) : null; }
+
+/* Which agent an open project shows: the one picked for it, else a running
+   one, else the default. */
+function repoAgent(p) {
+  const ids = Object.keys(p.agents || {});
+  const want = localStorage.getItem('vp.agent.' + p.name);
+  if (want && ids.includes(want)) return want;
+  return ids.find(id => p.agents[id].up) || (ids.includes(DEFAULT_AGENT) ? DEFAULT_AGENT : ids[0]);
+}
+
+function renderRepos(list) {
+  const box = $('reposList');
+  const keep = $('repos').scrollTop;
+  const want = $('repoFilter').value.trim().toLowerCase();
+  const shown = list.filter(p => !want || p.name.toLowerCase().includes(want) ||
+    ((p.git && p.git.branch) || '').toLowerCase().includes(want) ||
+    (p.tickets || []).some(k => k.toLowerCase().includes(want)));
+  // A repository gets a heading of its own when several projects share it — a
+  // monorepo's worktrees; standalone repos share one, and outside git is last.
+  const perRepo = {};
+  for (const p of list) if (p.git) perRepo[p.git.repo] = (perRepo[p.git.repo] || 0) + 1;
+  const groups = new Map();
+  // Pinned projects come first, out of their repository's group.
+  for (const p of shown) {
+    const k = p.pinned ? '~pinned' : !p.git ? '~none' : perRepo[p.git.repo] > 1 ? p.git.repo : '~single';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(p);
+  }
+  const rank = k => k === '~pinned' ? -1 : k === '~none' ? 2 : k === '~single' ? 1 : 0;
+  const order = [...groups.keys()].sort((a, b) => rank(a) - rank(b) ||
+    (rank(a) ? 0 : groups.get(a)[0].git.name.localeCompare(groups.get(b)[0].git.name)));
+  box.innerHTML = '';
+  if (!shown.length) {
+    box.innerHTML = '<p class="hnote">' + (list.length ? 'Nothing matches.' : 'No projects registered.') + '</p>';
+  }
+  for (const k of order) {
+    const items = groups.get(k);
+    const h = document.createElement('div');
+    h.className = 'hsec rsec';
+    const title = k === '~pinned' ? 'Pinned' : k === '~none' ? 'Not in git' :
+                  k === '~single' ? 'Projects' : items[0].git.name;
+    h.innerHTML = esc(title) + ' · ' + items.length +
+      (k[0] !== '~' ? '<span class="rpath">' + esc(k.replace(/\/\.git$/, '')) + '</span>' : '');
+    box.appendChild(h);
+    const g = document.createElement('div');
+    g.className = 'rlist';
+    items.forEach(p => g.appendChild(repoCard(p)));
+    box.appendChild(g);
+  }
+  $('repos').scrollTop = keep;
+}
+
+function repoCard(p) {
+  const agents = Object.entries(p.agents || {});
+  const up = agents.some(([, a]) => a.up);
+  const open = p.name === openProject;
+  const c = document.createElement('div');
+  c.className = 'acard rcard' + (up ? ' live' : '') + (open ? ' open' : '');
+  c.dataset.project = p.name;
+  let h = '<div class="rtop"><span class="dot' + (up ? ' on' : '') + '"></span>' +
+          '<span class="aname">' + esc(p.name) + '</span>';
+  const running = agents.filter(([, a]) => a.up).map(([id]) => agentShort(id));
+  if (running.length && !(running.length === 1 && running[0] === agentShort(DEFAULT_AGENT)))
+    h += '<span class="achip on">' + esc(running.join(' · ')) + '</span>';
+  if (p.port) {
+    const t = { host: p.host, port: p.port, scheme: p.scheme, path: p.path };
+    h += '<a class="rweb" target="_blank" rel="noopener" href="' + esc(p.url || webUrl(t)) + '"' +
+         (p.up ? '' : ' title="not running"') + '>web' + (p.up ? '' : ' ○') + ' &#8599;</a>';
+  }
+  h += '<button class="rpin' + (p.pinned ? ' on' : '') + '" title="' +
+       (p.pinned ? 'Unpin' : 'Pin to the top') + '">&#128204;</button>' +
+       '<span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span></div>';
+  const sub = [];
+  if (p.git) {
+    const bits = ['⎇ ' + esc(p.git.branch || 'detached')];
+    if (p.git.worktree) bits.push('<span class="wt">worktree</span>');
+    if (p.git.subdir) bits.push(esc(p.git.subdir));
+    sub.push('<span class="rgit">' + bits.join(' · ') + '</span>');
+  }
+  for (const k of (p.tickets || [])) {
+    const href = ticketHref(k);
+    sub.push(href ? '<a class="tchip" target="_blank" rel="noopener" href="' + esc(href) + '">' + esc(k) + '</a>'
+                  : '<span class="tchip">' + esc(k) + '</span>');
+  }
+  if (sub.length) h += '<div class="rsub">' + sub.join(' ') + '</div>';
+  if (open) {
+    if (p.desc) h += '<div class="rdesc">' + esc(p.desc) + '</div>';
+    const pu = fmtProjUsage(p.usage);
+    if (pu) h += '<div class="ameta">' + esc(pu) + '</div>';
+    h += '<div class="rbar"><div class="seg aseg"></div><span class="grow"></span></div>' +
+'';
+  }
+  c.innerHTML = h;
+  // The header opens and closes it; links in it stay links.
+  c.querySelector('.rtop').onclick = e => { if (!e.target.closest('a, button')) toggleProject(p.name); };
+  const pin = c.querySelector('.rpin');
+  pin.onclick = async () => {
+    pin.disabled = true;
+    try { await api('/api/pin', { body: { project: p.name, view: 'projects', pinned: !p.pinned } }); }
+    catch (e) { toast(e.message); pin.disabled = false; return; }
+    await loadRepos(true);
+  };
+  if (open) fillOpen(c, p);
+  return c;
+}
+
+function toggleProject(name) {
+  openProject = openProject === name ? null : name;
+  try { localStorage.setItem('vp.repos.open', openProject || ''); } catch (e) {}
+  renderRepos(reposList);
+  if (openProject) {
+    const card = document.querySelector('.rcard.open');
+    if (card) card.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+}
+
+/* The open project's agent toggle, its actions, and the terminal's place. */
+function fillOpen(card, p) {
+  const agent = repoAgent(p), a = p.agents[agent] || {};
+  const seg = card.querySelector('.aseg');
+  for (const [id, st] of Object.entries(p.agents)) {
+    const b = document.createElement('button');
+    b.className = id === agent ? 'on' : '';
+    b.innerHTML = '<span class="dot' + (st.up ? ' on' : '') + '"></span>' + esc(agentShort(id));
+    b.title = st.up ? 'running' : 'not running';
+    b.onclick = e => {
+      e.stopPropagation();
+      try { localStorage.setItem('vp.agent.' + p.name, id); } catch (err) {}
+      renderRepos(reposList);
+    };
+    seg.appendChild(b);
+  }
+  const bar = card.querySelector('.rbar');
+  const act = (label, cls, fn) => {
+    const b = document.createElement('button');
+    b.innerHTML = label;
+    b.className = 'ract ' + (cls || '');
+    b.onclick = e => { e.stopPropagation(); fn(b); };
+    bar.appendChild(b);
+    return b;
+  };
+  // Into this project's voice view, on the agent picked above — the same
+  // switch the operator's open_project makes.
+  const voice = () => {
+    if (!voiceOn) return;
+    act('&#127908; Voice', '', () => {
+      try { localStorage.setItem('vp.agent.' + p.name, agent); } catch (e) {}
+      setView('project', p.name);
+    }).title = 'Talk about ' + p.name + ' (' + agentShort(agent) + ') by voice';
+  };
+  if (!a.up) {
+    act('Start ' + esc(agentShort(agent)), 'start', b => control(b, 'start_agent', p.name, agent,
+      null, agentShort(agent) + ' started in ' + p.name));
+    voice();
+    card.insertAdjacentHTML('beforeend', '<div class="rnote">' + esc(agentShort(agent)) +
+                            ' isn\u2019t running in ' + esc(p.name) + '.</div>');
+    return;
+  }
+  act('Terminal &#10530;', 'term', () => openTerminal(p.name, agent));
+  voice();
+  act('Stop', 'stop', b => control(b, 'stop_agent', p.name, agent,
+    'Stop ' + p.name + "'s " + agentShort(agent) + ' session?\n\nThis kills the tmux session ' +
+    'and the agent in it, mid-turn or not.', 'stopped ' + p.name + "'s " + agentShort(agent)));
+}
+
+async function control(b, action, project, agent, ask, done) {
+  if (ask && !confirm(ask)) return;
+  b.disabled = true;
+  try {
+    await api('/api/control', { body: { action, project, agent } });
+    toast(done);
+  } catch (e) { toast(e.message); b.disabled = false; return; }
+  await loadRepos(true);
+}
+
+/* ---------- the live terminal ---------- */
+/* xterm.js (terminal/'s vendored copy, served at /vendor/), loaded the first
+   time a terminal opens. The wire format is terminal/'s: PTY bytes down as
+   binary frames, keystrokes and resizes up as JSON. */
+let xtermReady = null;
+function loadXterm() {
+  if (xtermReady) return xtermReady;
+  const css = document.createElement('link');
+  css.rel = 'stylesheet';
+  css.href = '/vendor/xterm.css';
+  document.head.appendChild(css);
+  const one = src => new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = res; s.onerror = () => rej(new Error('could not load ' + src));
+    document.head.appendChild(s);
+  });
+  xtermReady = one('/vendor/xterm.js').then(() => Promise.all(
+    ['/vendor/addon-fit.js', '/vendor/addon-unicode11.js', '/vendor/addon-web-links.js'].map(one)));
+  return xtermReady;
+}
+const isTouch = (navigator.maxTouchPoints > 0 || 'ontouchstart' in window) &&
+                matchMedia('(hover: none)').matches;
+const TERM_THEME = {
+  background: '#0b0e14', foreground: '#d5dae2', cursor: '#7fd88f', cursorAccent: '#0b0e14',
+  selectionBackground: '#2b3646',
+  black: '#0b0e14', brightBlack: '#5c6675', red: '#f06c75', brightRed: '#ff8b91',
+  green: '#7fd88f', brightGreen: '#9ff0ad', yellow: '#e3c07b', brightYellow: '#f5d99a',
+  blue: '#61afef', brightBlue: '#8ac6ff', magenta: '#c678dd', brightMagenta: '#e0a0f0',
+  cyan: '#56b6c2', brightCyan: '#7fd3de', white: '#d5dae2', brightWhite: '#ffffff',
+};
+
+/* The image in a paste or a drop, if there is one. */
+function imageIn(data) {
+  if (!data) return null;
+  for (const item of data.items || []) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) return item.getAsFile();
+  }
+  return null;
+}
+
+/* Claude reads PNG, JPEG, GIF and WebP. Anything else the browser can show —
+   an iPhone's HEIC — is redrawn as a JPEG first. */
+const CLAUDE_IMAGES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+async function claudeImage(blob) {
+  if (CLAUDE_IMAGES.includes(blob.type)) return blob;
+  const bitmap = await createImageBitmap(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.getContext('2d').drawImage(bitmap, 0, 0);
+  return new Promise((ok, fail) => canvas.toBlob(
+    b => (b ? ok(b) : fail(new Error("couldn't convert the image"))), 'image/jpeg', 0.9));
+}
+
+class LiveTerm {
+  constructor(project, agent) {
+    this.project = project;
+    this.agent = agent;
+    this.key = project + '/' + agent;
+    this.host = document.createElement('div');
+    this.host.className = 'lterm';
+    this.host.innerHTML = '<div class="lscreen"></div><div class="lnote" hidden></div>' +
+      '<div class="lkeys">' +
+      '<button data-send="\x1b">esc</button><button data-send="\t">tab</button>' +
+      '<button data-ctrl>ctrl</button><button data-arrow="A">&#8593;</button>' +
+      '<button data-arrow="B">&#8595;</button><button data-arrow="D">&#8592;</button>' +
+      '<button data-arrow="C">&#8594;</button><button data-paste>paste</button>' +
+      '<button data-image title="Send the agent a photo or screenshot">image</button>' +
+      '<button data-send="\r" class="wide">&#9166;</button></div>';
+    this.screen = this.host.querySelector('.lscreen');
+    this.note = this.host.querySelector('.lnote');
+    this.ctrl = false;
+    this.disposed = false;
+    this.retry = 0;
+    this.keys();
+    loadXterm().then(() => this.start()).catch(e => this.say(e.message));
+  }
+
+  start() {
+    if (this.disposed) return;
+    this.term = new Terminal({
+      fontSize: isTouch ? 10 : 12, lineHeight: 1.15, cursorBlink: true, scrollback: 5000,
+      fontFamily: '"SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace',
+      allowProposedApi: true, macOptionIsMeta: true, theme: TERM_THEME,
+    });
+    this.fitter = new FitAddon.FitAddon();
+    this.term.loadAddon(this.fitter);
+    this.term.loadAddon(new WebLinksAddon.WebLinksAddon());
+    try { this.term.loadAddon(new Unicode11Addon.Unicode11Addon()); this.term.unicode.activeVersion = '11'; }
+    catch (e) {}
+    this.term.open(this.screen);
+    this.term.onData(d => {
+      if (this.ctrl && d.length === 1) { this.setCtrl(false); return this.send({ t: 'i', d: ctrlChar(d) }); }
+      this.send({ t: 'i', d });
+    });
+    this.term.onBinary(d => this.send({ t: 'ib', d: btoa(d) }));
+    this.touch();
+    this.images();
+    this.observer = new ResizeObserver(() => this.fit());
+    this.observer.observe(this.screen);
+    this.fit();
+    this.connect();
+  }
+
+  connect() {
+    if (this.disposed) return;
+    const q = new URLSearchParams({ project: this.project, agent: this.agent,
+                                    cols: this.term.cols, rows: this.term.rows });
+    const tok = localStorage.getItem('vp.token');
+    if (tok) q.set('token', tok);
+    const ws = this.ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') +
+                                       location.host + '/ws/attach?' + q);
+    ws.binaryType = 'arraybuffer';
+    this.ended = null;
+    ws.onopen = () => { this.retry = 0; this.say(null); this.fit(); };
+    ws.onmessage = e => {
+      if (typeof e.data !== 'string') { this.term.write(new Uint8Array(e.data)); return; }
+      let m = {};
+      try { m = JSON.parse(e.data); } catch (err) {}
+      if (m.t === 'error') this.ended = m.message;
+      else if (m.t === 'exit') this.ended = 'detached — the session ended or was left';
+    };
+    ws.onclose = () => {
+      if (this.disposed) return;
+      if (this.ended) { this.say(this.ended + ' · tap to reattach'); return; }
+      // A dropped connection (a phone asleep, wifi gone): attach again, which
+      // tmux answers with a full repaint.
+      this.say('reconnecting…');
+      setTimeout(() => this.connect(), Math.min(8000, 800 * 2 ** this.retry++));
+    };
+  }
+
+  send(m) { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(m)); }
+
+  fit() {
+    if (!this.term || !this.screen.clientWidth) return;
+    try { this.fitter.fit(); } catch (e) { return; }
+    if (this.term.cols !== this.sent?.[0] || this.term.rows !== this.sent?.[1]) {
+      this.sent = [this.term.cols, this.term.rows];
+      this.send({ t: 'resize', cols: this.term.cols, rows: this.term.rows });
+    }
+  }
+
+  mounted() { requestAnimationFrame(() => { this.fit(); if (this.term) this.term.refresh(0, this.term.rows - 1); }); }
+
+  say(text) {
+    this.note.hidden = !text;
+    this.note.textContent = text || '';
+    this.note.onclick = this.ended ? () => { this.say('attaching…'); this.connect(); } : null;
+  }
+
+  setCtrl(on) { this.ctrl = on; this.host.querySelector('[data-ctrl]').classList.toggle('on', on); }
+
+  arrow(l) { return (this.term && this.term.modes.applicationCursorKeysMode ? '\x1bO' : '\x1b[') + l; }
+
+  /* The key row: keys a phone keyboard hasn't got. Taps never take focus, so
+     the keyboard stays as it was. */
+  keys() {
+    const row = this.host.querySelector('.lkeys');
+    if (!isTouch) row.hidden = true;
+    for (const type of ['pointerdown', 'mousedown', 'touchstart', 'click'])
+      row.addEventListener(type, e => { if (e.target.closest('button')) e.preventDefault(); }, { passive: false });
+    row.addEventListener('pointerdown', async e => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      if (b.hasAttribute('data-ctrl')) return this.setCtrl(!this.ctrl);
+      if (b.hasAttribute('data-image')) return;
+      if (b.hasAttribute('data-paste')) {
+        if (await this.pasteClipboard()) return;
+        let text = null;
+        try { text = await navigator.clipboard.readText(); } catch (err) { text = prompt('Paste:'); }
+        if (text) this.send({ t: 'i', d: text });
+        return;
+      }
+      const d = b.dataset.send !== undefined ? b.dataset.send : this.arrow(b.dataset.arrow);
+      this.setCtrl(false);
+      this.send({ t: 'i', d });
+    });
+    // On a touch screen only the lift counts as a gesture, and a file picker
+    // opens for nothing less.
+    row.addEventListener('pointerup', e => {
+      if (e.target.closest('[data-image]')) this.pickImage();
+    });
+  }
+
+  /* Images. The agent can't see this device's clipboard or photos, so an
+     image is uploaded (/api/image), saved where the agent can read it, and
+     its path pasted into the terminal — which Claude Code turns into an
+     attached image, as Ctrl+V does at the desk. From the image key (photos,
+     camera, files), the paste key when the clipboard holds an image, a
+     browser paste, or a drop on the terminal. */
+  images() {
+    this.screen.addEventListener('paste', e => {
+      const file = imageIn(e.clipboardData);
+      if (!file) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.sendImage(file);
+    }, true);
+    this.screen.addEventListener('dragover', e => e.preventDefault());
+    this.screen.addEventListener('drop', e => {
+      const file = imageIn(e.dataTransfer);
+      if (!file) return;
+      e.preventDefault();
+      this.sendImage(file);
+    });
+  }
+
+  pickImage() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = () => { if (input.files[0]) this.sendImage(input.files[0]); };
+    input.click();
+  }
+
+  /* The paste key, where the browser lets the page read the clipboard whole:
+     an image goes up, text is typed. One read, so iOS asks once. False when
+     it can't, for the text-only fallback. */
+  async pasteClipboard() {
+    if (!navigator.clipboard || !navigator.clipboard.read) return false;
+    let items;
+    try { items = await navigator.clipboard.read(); } catch (e) { return false; }
+    for (const item of items) {
+      const type = item.types.find(t => t.startsWith('image/'));
+      if (type) { this.sendImage(await item.getType(type)); return true; }
+    }
+    for (const item of items) {
+      if (!item.types.includes('text/plain')) continue;
+      const text = await (await item.getType('text/plain')).text();
+      if (text) this.term.paste(text);
+      return true;
+    }
+    return true;
+  }
+
+  async sendImage(blob) {
+    this.say('sending image…');
+    try {
+      const body = await claudeImage(blob);
+      const q = new URLSearchParams({ project: this.project, agent: this.agent });
+      const d = await api('/api/image?' + q, { method: 'POST', headers: { 'Content-Type': body.type }, body });
+      this.say(null);
+      // term.paste, not a plain send: bracketed paste is how Claude Code tells
+      // a pasted path from typing.
+      this.term.paste(d.path);
+    } catch (e) {
+      this.say('image not sent: ' + e.message);
+      setTimeout(() => { if (!this.ended) this.say(null); }, 4000);
+    }
+  }
+
+  /* A drag scrolls: the app's own scrolling when it took the mouse (tmux with
+     mouse on, Claude), arrow keys in a full-screen app that didn't, else
+     xterm's scrollback. A flick glides on after the finger lifts, as a native
+     scroll does. A tap raises the keyboard. */
+  touch() {
+    let drag = null, residue = 0, velocity = 0, frame = 0;
+    const el = this.screen, term = this.term;
+    const cell = () => { const s = el.querySelector('.xterm-screen'); return s ? s.getBoundingClientRect().height / term.rows : 16; };
+    const lines = n => {
+      if (term.modes.mouseTrackingMode !== 'none') {
+        term.element.dispatchEvent(new WheelEvent('wheel', { deltaY: n * cell(), deltaMode: 0,
+          clientX: drag ? drag.x : 0, clientY: drag ? drag.y : 0, bubbles: true, cancelable: true }));
+      } else if (term.buffer.active.type === 'alternate') {
+        this.send({ t: 'i', d: this.arrow(n < 0 ? 'A' : 'B').repeat(Math.min(8, Math.abs(n))) });
+      } else term.scrollLines(n);
+    };
+    const pixels = px => {
+      residue += px;
+      const n = Math.trunc(residue / cell());
+      if (n) { residue -= n * cell(); lines(n); }
+    };
+    const stop = () => { cancelAnimationFrame(frame); frame = 0; velocity = 0; };
+    // ~0.5 s of glide from a firm flick, in px/ms; 16 ms a frame.
+    const glide = () => {
+      frame = requestAnimationFrame(() => {
+        velocity *= 0.94;
+        if (this.disposed || Math.abs(velocity) < 0.02) return stop();
+        pixels(-velocity * 16);
+        glide();
+      });
+    };
+    el.addEventListener('touchstart', e => {
+      stop();
+      if (e.touches.length !== 1) { drag = null; return; }
+      residue = 0;
+      drag = { x: e.touches[0].clientX, y: e.touches[0].clientY, moved: 0, at: e.timeStamp, v: 0 };
+    }, { passive: true });
+    el.addEventListener('touchmove', e => {
+      if (!drag || e.touches.length !== 1) return;
+      const y = e.touches[0].clientY, dy = y - drag.y;
+      const dt = Math.max(1, e.timeStamp - drag.at);
+      // Smoothed, so one jittery last sample doesn't decide the flick.
+      drag.v = 0.7 * (dy / dt) + 0.3 * drag.v;
+      drag.y = y; drag.at = e.timeStamp; drag.moved += Math.abs(dy);
+      pixels(-dy);
+      e.preventDefault();
+    }, { passive: false });
+    el.addEventListener('touchend', e => {
+      if (drag && drag.moved < 8 && !term.hasSelection()) term.focus();
+      // No glide once the drag has decayed into arrow keys (it would keep
+      // walking a menu), or when the finger stopped before it lifted.
+      const canGlide = term.modes.mouseTrackingMode !== 'none' || term.buffer.active.type !== 'alternate';
+      if (canGlide && drag && drag.moved > 8 && e.timeStamp - drag.at < 80 && Math.abs(drag.v) > 0.15) {
+        velocity = drag.v;
+        glide();
+      }
+      drag = null;
+    }, { passive: true });
+  }
+
+  dispose() {
+    this.disposed = true;
+    if (this.ws) this.ws.close();
+    if (this.observer) this.observer.disconnect();
+    if (this.term) this.term.dispose();
+    this.host.remove();
+  }
+}
+
+function ctrlChar(ch) {
+  const c = ch.toUpperCase().charCodeAt(0);
+  if (c >= 64 && c <= 95) return String.fromCharCode(c - 64);
+  return ch === ' ' ? '\x00' : ch === '?' ? '\x7f' : ch;
+}
+
+/* ---------- Tickets: your Jira tickets, read-only ---------- */
+/* The config's JQL — your open tickets by default — grouped by where they are
+   in their workflow, each with the projects linked to it (explicitly, or by a
+   branch that names it). Details on tap; changing a ticket is the desktop's
+   and `proj jira`'s job. */
+let ticketsTimer = null, ticketsSig = '';
+const ticketOpen = new Set(), ticketCache = {};
+
+function startTickets() { if (!ticketsTimer) ticketsTimer = setInterval(() => loadTickets(), 120000); }
+function stopTickets() { clearInterval(ticketsTimer); ticketsTimer = null; }
+
+async function loadTickets(force) {
+  let d;
+  if (!ticketsSig) $('ticketsInner').innerHTML = '<p class="hnote pending">loading</p>';
+  try { d = await api('/api/tickets'); }
+  catch (e) {
+    $('ticketsInner').innerHTML = '<p class="hnote">' + esc(e.message) + '</p>';
+    ticketsSig = '';
+    return;
+  }
+  const sig = JSON.stringify(d);
+  if (force || sig !== ticketsSig) { ticketsSig = sig; renderTickets(d.issues, d.linked || {}); }
+}
+
+function renderTickets(issues, linked) {
+  const box = $('ticketsInner');
+  const keep = $('tickets').scrollTop;
+  box.innerHTML = '';
+  if (!issues.length) { box.innerHTML = '<p class="hnote">No tickets match.</p>'; return; }
+  const cats = [['indeterminate', 'In progress'], ['new', 'To do'], ['done', 'Done'], ['', 'Other']];
+  for (const [cat, title] of cats) {
+    const items = issues.filter(i => cat ? i.category === cat
+                                         : !['indeterminate', 'new', 'done'].includes(i.category));
+    if (!items.length) continue;
+    const h = document.createElement('div');
+    h.className = 'hsec';
+    h.textContent = title + ' · ' + items.length;
+    box.appendChild(h);
+    const g = document.createElement('div');
+    g.className = 'hgrid';
+    items.forEach(i => g.appendChild(ticketCard(i, linked[i.key] || [])));
+    box.appendChild(g);
+  }
+  $('tickets').scrollTop = keep;
+}
+
+function ticketCard(i, projects) {
+  const c = document.createElement('div');
+  c.className = 'acard tcard cat-' + (i.category || 'other');
+  const upd = Date.parse(i.updated);
+  const meta = [];
+  if (projects.length) meta.push('→ ' + projects.join(', '));
+  if (i.priority) meta.push(i.priority);
+  meta.push(i.assignee || 'unassigned');
+  const open = ticketOpen.has(i.key);
+  c.innerHTML = '<div class="ahead"><span class="apill">' + esc(i.status) + '</span>' +
+    '<span class="aname">' + esc(i.key) + '</span><span class="achip">' + esc(i.type) + '</span>' +
+    (Number.isFinite(upd) ? '<span class="atime" data-since="' + (upd / 1000) + '">' + ago(upd / 1000) + '</span>' : '') +
+    '</div><div class="asum">' + esc(i.summary) + '</div>' +
+    '<div class="ameta">' + esc(meta.join(' · ')) + '</div>' +
+    '<div class="abtns"><button data-act="more">' + (open ? 'Less' : 'More') + '</button>' +
+    '<a class="rweb" style="margin-left:0" target="_blank" rel="noopener" href="' + esc(i.url) +
+    '">Open in Jira &#8599;</a></div><div class="adetail"' + (open ? '' : ' hidden') + '></div>';
+  const detail = c.querySelector('.adetail'), more = c.querySelector('[data-act=more]');
+  if (open) fillTicket(detail, i.key);
+  more.onclick = () => {
+    const show = detail.hidden;
+    detail.hidden = !show;
+    more.textContent = show ? 'Less' : 'More';
+    if (show) { ticketOpen.add(i.key); fillTicket(detail, i.key); }
+    else ticketOpen.delete(i.key);
+  };
+  return c;
+}
+
+async function fillTicket(box, key) {
+  let t = ticketCache[key];
+  if (!t) {
+    box.innerHTML = '<p class="hnote pending">loading</p>';
+    try { t = ticketCache[key] = await api('/api/ticket?key=' + encodeURIComponent(key)); }
+    catch (e) { box.innerHTML = '<p class="hnote">' + esc(e.message) + '</p>'; return; }
+  }
+  let h = '<span class="alabel">description</span><div class="tdesc">' +
+          esc(t.description || '(none)') + '</div>';
+  for (const cm of (t.comments || []).slice(-5)) {
+    h += '<div class="tcomment"><span class="alabel">' + esc(cm.author) + ' · ' +
+         esc((cm.created || '').slice(0, 16).replace('T', ' ')) + '</span>' + esc(cm.body || '') + '</div>';
+  }
+  box.innerHTML = h;
+}
+
+/* ---------- views ---------- */
+/* Which conversation is on screen. The operator is stored like any project's,
+   under a reserved key, so history, reset and the chat turn itself all take the
+   same path either way. */
+function keyFor(v) { return v === 'projects' ? OPERATOR : current; }
+function chatKey() { return keyFor(view); }
+
+const LIST_VIEWS = ['home', 'repos', 'tickets'];
+const VIEW_TITLE = { home: 'Agents', repos: 'Projects', tickets: 'Tickets', projects: 'Operator' };
+
+async function setView(v, name) {
+  if (!voiceOn && !LIST_VIEWS.includes(v)) v = 'home';
+  if (v === 'tickets' && !jiraOn) v = 'home';
+  if (v === 'projects' && !operatorOn) v = 'project';
+  if (v === 'project') {
+    if (name) current = name;
+    if (!current) { toast('No projects found.'); return; }
+    localStorage.setItem('vp.project', current);
+    $('project').value = current;
+  }
+  view = v;
+  localStorage.setItem('vp.view', v);
+  document.body.classList.toggle('viewProjects', v === 'projects');
+  document.body.classList.toggle('viewProject', v === 'project');
+  document.body.classList.toggle('viewHome', v === 'home');
+  document.body.classList.toggle('viewRepos', v === 'repos');
+  document.body.classList.toggle('viewTickets', v === 'tickets');
+  document.body.classList.toggle('viewList', LIST_VIEWS.includes(v));
+  $('viewTitle').textContent = VIEW_TITLE[v] || '';
+  if (!LIST_VIEWS.includes(v)) localStorage.setItem('vp.talkView', v);
+  history.replaceState(null, '', LIST_VIEWS.includes(v) ? '#' + v : location.pathname);
+  for (const b of document.querySelectorAll('#tabs button'))
+    b.classList.toggle('on', b.dataset.tab === (LIST_VIEWS.includes(v) ? v : 'talk'));
+  // Wide, every column stays up and this only says which one the mic feeds.
+  $('paneOperator').classList.toggle('focus', v === 'projects');
+  $('paneProject').classList.toggle('focus', v === 'project');
+  $('paneProjectName').textContent = current || 'project';
+  updateTarget();
+  // Each view owns its own pollers; leaving one must not leave them running.
+  stopUpdates();
+  stopOverview();
+  stopHome();
+  stopRepos();
+  stopTickets();
+  clearSummaryPending();
+  pendingSummary = null;
+  if (LIST_VIEWS.includes(v)) {
+    // No composer on a list, so nothing for a hands-free loop to talk to: a
+    // mic reopening behind the cards would send to a conversation off screen.
+    if (handsFree) setConvo(false);
+    if (v === 'home') { await loadHome(true); startHome(); }
+    else if (v === 'repos') { await loadRepos(true); startRepos(); }
+    else { await loadTickets(true); startTickets(); }
+    return;
+  }
+  // In the overview, Status means "across all of them".
+  $('btnStatus').innerHTML = v === 'projects' ? '&#128202; Round-up' : '&#128202; Status';
+  if (v === 'projects') {
+    setDest('advisor');            // there is no single agent to send to here
+    // Only summaries that land from now on: entering the view shouldn't
+    // replay every agent reply since the server started.
+    lastOverviewTs = Date.now() / 1000;
+    await loadOperatorChat();
+    await loadOverview();
+    startOverview();
+    // The other columns are still on screen when there's room for them.
+    if (current) await selectProject(current);
+  } else {
+    await selectProject(current);
+    if (operatorOn) {
+      await loadOperatorChat();
+      await loadOverview();
+      startOverview();
+    }
+  }
+}
+
+async function loadOperatorChat() {
+  const h = await api('/api/history?project=' + encodeURIComponent(OPERATOR));
+  renderHistory(h.messages, 'projects');
+}
+
+/* ---------- third column: the project's own web app ---------- */
+/* The project list knows the port; only the browser knows the right host. A
+   project bound to localhost is reachable at the desk and not from the phone,
+   so a loopback host is rewritten to whatever host this page came from. */
+function webUrl(t) {
+  if (!t) return null;
+  let host = t.host;
+  const loopback = !host || /^(localhost|127\.|::1|\[::1\])/.test(host);
+  const weAreLocal = /^(localhost|127\.|\[?::1)/.test(location.hostname);
+  if (loopback && !weAreLocal) host = location.hostname;
+  return t.scheme + '://' + (host || location.hostname) + ':' + t.port + (t.path || '/');
+}
+/* A page on HTTPS may not frame plain HTTP — the browser blocks it silently,
+   so say so rather than showing an empty rectangle. */
+function canEmbed(url) {
+  return !(location.protocol === 'https:' && url.startsWith('http:'));
+}
+
+function showWeb(p) {
+  const frame = $('webFrame'), note = $('webNote'), tabs = $('webTabs');
+  tabs.innerHTML = '';
+  webTargets = [];
+  const web = p && p.web;
+  $('webTitle').textContent = web && web.desc ? web.desc : (p ? p.name : '');
+  if (!web) {
+    frame.classList.remove('show');
+    frame.removeAttribute('src');
+    note.style.display = '';
+    note.innerHTML = p
+      ? esc(p.name) + ' has no <code>web_port</code> in the project list, so there is no page to show.'
+      : '';
+    return;
+  }
+  webTargets = [web.main].concat(web.extra || []);
+  if (webTargets.length > 1) {
+    webTargets.forEach((t, i) => {
+      const b = document.createElement('button');
+      b.textContent = t.name || 'main';
+      b.onclick = () => openWebTab(i);
+      tabs.appendChild(b);
+    });
+  }
+  openWebTab(0);
+}
+
+function openWebTab(i) {
+  const t = webTargets[i];
+  if (!t) return;
+  webIndex = i;
+  [...$('webTabs').children].forEach((b, j) => b.classList.toggle('on', j === i));
+  const url = webUrl(t);
+  $('webOpen').onclick = () => window.open(url, '_blank', 'noopener');
+  const frame = $('webFrame'), note = $('webNote');
+  if (canEmbed(url)) {
+    note.style.display = 'none';
+    frame.classList.add('show');
+    frame.src = url;
+    return;
+  }
+  frame.classList.remove('show');
+  frame.removeAttribute('src');
+  note.style.display = '';
+  note.innerHTML =
+    'This page is served over HTTPS — the microphone needs a secure context — and ' +
+    '<code>' + esc(url) + '</code> is plain HTTP, so the browser refuses to embed it.' +
+    '<br><br><a href="' + esc(url) + '" target="_blank" rel="noopener">Open it in a tab &#8599;</a>' +
+    '<br><br>To have it inline, reach voice_prompt over http from this machine ' +
+    '(<code>http://localhost:' + esc(String(httpPort)) + '</code>, which is exempt from the ' +
+    'redirect), or put the project behind TLS as well.';
+}
+$('webReload').onclick = () => openWebTab(webIndex);
+$('rosterToggle').onclick = () => document.body.classList.toggle('wideRoster');
+
+/* ---------- tiles: the selected projects, in the project column ---------- */
+function renderTiles(list) {
+  const box = $('tiles');
+  box.innerHTML = '';
+  const picked = list.filter(p => p.selected);
+  if (!picked.length) {
+    const d = document.createElement('div');
+    d.id = 'tilesEmpty';
+    d.textContent = 'Nothing selected — ask the operator to watch some projects, or tap All…';
+    box.appendChild(d);
+    return;
+  }
+  for (const p of picked) {
+    const b = document.createElement('button');
+    b.className = 'tile' + (p.name === current ? ' on' : '');
+    const baseMeta = p.watching ? 'working…' : p.alive ? 'session up' : 'not running';
+    const pu = fmtProjUsage(p.usage);
+    const meta = pu ? baseMeta + ' · ' + pu : baseMeta;
+    b.innerHTML = '<div class="tname"><span class="dot' + (p.alive ? ' on' : '') + '"></span>' +
+                  esc(p.name) + agentChips(p) + '</div><div class="tmeta' + (p.watching ? ' busy' : '') + '">' +
+                  esc(meta) + '</div>';
+    b.onclick = () => setView('project', p.name);
+    box.appendChild(b);
+  }
+}
+
+/* An advisor asked for the screen to move (open_project / open_projects_view).
+   Applied once its reply has been read out, so the words and the change land
+   together rather than the screen jumping mid-sentence. */
+async function applyNav(nav) {
+  if (!nav || !nav.view) return;
+  if (nav.view === 'project' && nav.project) {
+    if (nav.agent) localStorage.setItem('vp.agent.' + nav.project, nav.agent);
+    await setView('project', nav.project);
+    toast('Opened ' + nav.project + (nav.agent ? ' · ' + agentShort(nav.agent) : ''));
+  } else if (nav.view === 'projects') {
+    await setView('projects');
+    toast('Back to all projects');
+  }
+}
+
+function startOverview() { if (!ovTimer) ovTimer = setInterval(pollOverview, 5000); }
+function stopOverview() { clearInterval(ovTimer); ovTimer = null; }
+
+async function loadOverview() {
+  const d = await api('/api/overview?after=' + lastOverviewTs);
+  if (d.services) {
+    lastServices = d.services;
+    const ubox = $('projectsUsage');
+    if (ubox) {
+      ubox.innerHTML = '';
+      const sgrid = renderServices(d.services);
+      if (sgrid) ubox.appendChild(sgrid);
+    }
+  }
+  renderCards(d.projects || []);
+  return d;
+}
+
+/* Poll for what changed while you're watching everything at once: liveness,
+   which agents are working, and any summary that landed in a selected project.
+   Without this the overview would be the one screen that never tells you an
+   agent finished. */
+async function pollOverview() {
+  if (!operatorOn) return;
+  let d;
+  try { d = await loadOverview(); } catch (e) { return; }   // transient
+  for (const m of (d.summaries || [])) {
+    lastOverviewTs = Math.max(lastOverviewTs, m.ts || 0);
+    pauseMusicForSummary();
+    addSummaryBubble(m.text, m.project, undefined, m.agent);
+    if (speakOn && view === 'projects' && !busy && !listening && !ttsActive)
+      speakText(m.project + (m.agent && m.agent !== DEFAULT_AGENT ? ', ' + agentShort(m.agent) : '') +
+                '. ' + m.text);
+  }
+}
+
+function renderCards(list) {
+  projects = list;
+  const box = $('projectCards');
+  box.innerHTML = '';
+  // Pinned first; each group keeps the server's order.
+  const pinned = list.filter(p => p.pinned);
+  for (const p of [...pinned, ...list.filter(p => !p.pinned)]) {
+    const card = document.createElement('div');
+    card.className = 'pcard' + (p.selected ? ' sel' : '');
+
+    const tick = document.createElement('button');
+    tick.className = 'psel';
+    tick.textContent = '✓';
+    tick.title = p.selected ? 'Stop watching this' : 'Watch this';
+    tick.onclick = () => toggleSelected(p.name, !p.selected);
+
+    const main = document.createElement('div');
+    main.className = 'pmain';
+    const name = document.createElement('div');
+    name.className = 'pname';
+    name.innerHTML = '<span class="dot' + (p.alive ? ' on' : '') + '"></span>';
+    name.appendChild(document.createTextNode(p.name));
+    name.insertAdjacentHTML('beforeend', agentChips(p));
+    const meta = document.createElement('div');
+    meta.className = 'pmeta' + (p.watching ? ' busy' : '');
+    const baseMeta = p.watching ? 'agent working…'
+                   : p.alive ? 'session up' : 'not running';
+    const pu = fmtProjUsage(p.usage);
+    meta.textContent = pu ? baseMeta + ' · ' + pu : baseMeta;
+    if (pu) meta.title = pu;
+    main.appendChild(name);
+    main.appendChild(meta);
+
+    const dive = document.createElement('button');
+    dive.className = 'pdive';
+    dive.textContent = 'Open ›';
+    dive.onclick = () => setView('project', p.name);
+
+    card.appendChild(tick);
+    card.appendChild(main);
+    card.appendChild(dive);
+    box.appendChild(card);
+  }
+  const strip = $('projectsPinned');
+  strip.innerHTML = '';
+  for (const p of pinned) {
+    const chip = document.createElement('button');
+    chip.title = 'Open ' + p.name;
+    chip.innerHTML = '<span class="dot' + (p.alive ? ' on' : '') + '"></span>';
+    chip.appendChild(document.createTextNode(p.name));
+    chip.onclick = () => setView('project', p.name);
+    strip.appendChild(chip);
+  }
+  const n = list.filter(p => p.selected).length;
+  $('projectsCount').textContent =
+    n + ' of ' + list.length + ' watched' + (n ? '' : ' — the operator sees nothing');
+  // Keep the project picker in step; it's the same roster.
+  const sel = $('project');
+  sel.innerHTML = '';
+  for (const p of list) {
+    const o = document.createElement('option');
+    o.value = p.name;
+    o.textContent = (p.alive ? '● ' : '○ ') + p.name;
+    sel.appendChild(o);
+  }
+  if (!current && list.length) current = list[0].name;
+  if (current) sel.value = current;
+  renderTiles(list);
+  updateTarget();
+  const cur = list.find(p => p.name === current);
+  if (cur && cur.name !== showWeb._for) { showWeb._for = cur.name; showWeb(cur); }
+}
+
+async function setSelection(payload) {
+  try { await api('/api/selection', { body: payload }); }
+  catch (e) { toast(e.message); return; }
+  await loadOverview();
+}
+const toggleSelected = (name, on) => setSelection(on ? { add: [name] } : { remove: [name] });
+/* Narrow only: the bar folds the roster. Unfolding takes height from the chat,
+   so keep its latest reply in view across the change. */
+function setProjectsOpen(open) {
+  const chat = $('chatOperator');
+  const atEnd = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 40;
+  $('projects').classList.toggle('open', open);
+  try { localStorage.setItem('vp.projectsOpen', open ? '1' : ''); } catch (e) {}
+  if (atEnd) chat.scrollTop = chat.scrollHeight;
+}
+try { if (localStorage.getItem('vp.projectsOpen')) $('projects').classList.add('open'); } catch (e) {}
+$('projectsBar').addEventListener('click', e => {
+  if (e.target.closest('button') || matchMedia('(min-width: 1100px)').matches) return;
+  setProjectsOpen(!$('projects').classList.contains('open'));
+});
+$('selAll').onclick = () => setSelection({ selected: projects.map(p => p.name) });
+$('selNone').onclick = () => setSelection({ selected: [] });
+for (const b of document.querySelectorAll('#tabs button')) {
+  b.onclick = () => {
+    const t = b.dataset.tab;
+    if (t !== 'talk') return setView(t);
+    const last = localStorage.getItem('vp.talkView');
+    setView(last === 'projects' && operatorOn ? 'projects' : 'project');
+  };
+}
+
+/* ---------- projects ---------- */
+async function loadProjects(keep) {
+  const data = await api('/api/projects');
+  projects = data.projects;
+  const sel = $('project');
+  sel.innerHTML = '';
+  for (const p of projects) {
+    const o = document.createElement('option');
+    o.value = p.name;
+    o.textContent = (p.alive ? '● ' : '○ ') + p.name;
+    sel.appendChild(o);
+  }
+  const want = keep || current || localStorage.getItem('vp.project');
+  if (want && projects.some(p => p.name === want)) sel.value = want;
+  current = sel.value || null;
+}
+async function selectProject(name) {
+  current = name;
+  localStorage.setItem('vp.project', name);
+  const p = projects.find(x => x.name === name);
+  $('dot').className = 'dot' + (p && p.alive ? ' on' : '');
+  $('paneProjectName').textContent = name;
+  renderTiles(projects);
+  if (p && showWeb._for !== name) { showWeb._for = name; showWeb(p); }
+  stopUpdates();
+  pendingSummary = null;
+  const h = await api('/api/history?project=' + encodeURIComponent(name));
+  renderHistory(h.messages, 'project');
+  lastSummaryTs = h.messages.reduce(
+    (t, m) => m.role === 'summary' ? Math.max(t, m.ts || 0) : t, 0);
+  pollUpdates();  // picks up a watch already running (e.g. after a reload)
+}
+
+$('termRow').onclick = () => { if (current) openTerminal(current, currentAgent()); };
+
+/* ---------- sending ---------- */
+function setBusy(b) {
+  busy = b;
+  for (const id of ['send', 'btnStatus', 'btnBrainstorm']) $(id).disabled = b;
+}
+async function askAdvisor(mode, message) {
+  if (busy || view === 'home') return;
+  if (view === 'project' && !current) return;
+  setBusy(true);
+  const asked = view;               // the reply belongs to the view that asked
+  /* Two independent switches. Speak decides whether the reply is read aloud,
+     and carries to the server as `voice` because VOICE_NOTE there asks for
+     prose written for the ear — no markdown. Convo decides only whether the mic
+     reopens afterwards, so Convo with Speak off is a conversation you talk into
+     and read back. */
+  const speak = speakOn;
+  const label = mode === 'status'
+    ? (asked === 'projects' ? 'Round-up' : 'Status update')
+    : (message || 'Brainstorm next steps');
+  addBubble('user', inline(label),
+    mode === 'status' ? '📊 status' : mode === 'brainstorm' ? '💡 brainstorm' : null, asked);
+  const pend = addBubble('advisor pending', 'thinking', null, asked);
+  if (speak || handsFree) setVoiceState('thinking');
+  try {
+    const body = asked === 'projects'
+      ? { scope: 'operator', mode, message, voice: speak }
+      : { project: current, agent: currentAgent(), mode, message, voice: speak };
+    const d = await api('/api/chat', { body });
+    pend.remove();
+    // The advisor may have changed the speed this turn; the reply speaks at it.
+    if (d.tts_rate) setTtsRate(d.tts_rate);
+    // The operator may have changed the working set as part of the turn.
+    if (d.selected && view === 'projects') loadOverview().catch(() => {});
+    // Prompts the advisor submitted itself (MCP send tool) during this turn.
+    for (const s of (d.sent || [])) addBubble('sent', md(s.text), sentTag(s.agent), asked);
+    addAdvisorBubble(d.reply, asked);
+    if (d.sent && d.sent.length) watchForSummary();
+    setBusy(false);
+    if (speak) await speakText(d.reply);
+    // After the words, not before: the reply is what explains the move.
+    if (d.nav) await applyNav(d.nav);
+    if (handsFree) startListen();   // sets the strip back to "listening"
+    else setVoiceState(null);
+  } catch (e) {
+    pend.remove();
+    addBubble('err', esc(e.message), null, asked);
+    setBusy(false);
+    setVoiceState(null);
+    if (handsFree) setConvo(false);
+  }
+}
+async function sendProject(text) {
+  if (busy || !current || view === 'home') return;
+  const short = text.length > 220 ? text.slice(0, 220) + '…' : text;
+  const agent = currentAgent();
+  if (!confirm('Send this prompt to the "' + current + '" ' +
+               (instancesOf(current).find(i => i.id === agent) || { label: 'coding' }).label + ' agent?\n\n' + short)) return;
+  setBusy(true);
+  try {
+    await api('/api/send', { body: { project: current, agent, text } });
+    addBubble('sent', md(text), sentTag(agent));
+    $('input').value = '';
+    autogrow();
+    watchForSummary();
+  } catch (e) {
+    addBubble('err', esc(e.message));
+  }
+  setBusy(false);
+}
+
+/* ---------- voice settings ---------- */
+/* One sheet for the three choices that differ per browser: which recognizer
+   takes dictation, which engine reads replies back, and in which voice. All of
+   it is per-browser and lives in localStorage — the phone and the desktop want
+   different answers. */
+
+async function loadKokoroVoices() {
+  if (!serverTTS) return;
+  try {
+    const d = await api('/api/voices');
+    kokoroVoices = d.voices || [];
+    kokoroErr = kokoroVoices.length ? '' : 'the TTS server listed no voices';
+  } catch (e) {
+    kokoroVoices = [];
+    kokoroErr = e.message;
+  }
+  if (!$('sheet').hidden) fillVoices();
+}
+
+/* af_heart -> "Heart — American female". Kokoro names its voices <language
+   letter><gender letter>_<name>; anything that doesn't fit shows as-is. */
+const KOKORO_LANG = { a: 'American', b: 'British', e: 'Spanish', f: 'French',
+                      h: 'Hindi', i: 'Italian', j: 'Japanese', p: 'Portuguese',
+                      z: 'Mandarin' };
+function kokoroLabel(id) {
+  const m = /^([abefhijpz])([fm])_(.+)$/.exec(id);
+  if (!m) return id;
+  const name = m[3].charAt(0).toUpperCase() + m[3].slice(1);
+  return name + ' — ' + KOKORO_LANG[m[1]] + ' ' + (m[2] === 'f' ? 'female' : 'male');
+}
+
+function fillVoices() {
+  const sel = $('voiceSel');
+  sel.innerHTML = '';
+  const add = (value, label) => {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = label;
+    sel.appendChild(o);
+  };
+  if (ttsEngineNow() === 'kokoro') {
+    if (!kokoroVoices.length) {
+      add('', kokoroErr ? 'unavailable — ' + kokoroErr : 'loading…');
+      sel.disabled = true;
+      return;
+    }
+    sel.disabled = false;
+    for (const v of kokoroVoices) add(v, kokoroLabel(v));
+    sel.value = kokoroVoices.includes(kokoroVoice()) ? kokoroVoice() : kokoroVoices[0];
+  } else {
+    const vs = ('speechSynthesis' in window) ? speechSynthesis.getVoices() : [];
+    if (!vs.length) {
+      // Firefox on Linux has no voices at all without speech-dispatcher.
+      add('', 'no voices installed in this browser');
+      sel.disabled = true;
+      return;
+    }
+    sel.disabled = false;
+    // English first: the advisor speaks it, and Chrome lists a hundred others.
+    const sorted = vs.slice().sort((a, b) =>
+      (/^en/.test(b.lang) ? 1 : 0) - (/^en/.test(a.lang) ? 1 : 0));
+    for (const v of sorted) add(v.voiceURI, v.name + ' (' + v.lang + ')');
+    if (ttsVoice) sel.value = ttsVoice.voiceURI;
+  }
+}
+
+function fillSheet() {
+  for (const b of $('sttSeg').children) {
+    b.classList.toggle('on', b.dataset.mode === sttMode);
+    b.disabled = b.dataset.mode === 'server' && !serverSTT;
+  }
+  for (const b of $('ttsSeg').children) {
+    b.classList.toggle('on', b.dataset.engine === ttsEngineNow());
+    b.disabled = b.dataset.engine === 'kokoro' && !serverTTS;
+  }
+  const stt = $('sttHint');
+  stt.className = 'hint';
+  if (!serverSTT) {
+    stt.textContent = SR
+      ? 'No transcription server configured — set stt_url in config.toml to add one.'
+      : 'No dictation here: this browser has no recognizer, and stt_url is unset in config.toml.';
+    if (!SR) stt.className = 'hint warn';
+  } else if (!SR) {
+    stt.textContent = 'This browser has no recognizer of its own, so Auto records and sends the audio to your server.';
+  } else {
+    stt.textContent = 'Auto uses the browser recognizer where there is one, and your server where there is not.';
+  }
+  const tts = $('ttsHint');
+  tts.className = 'hint';
+  tts.textContent = serverTTS
+    ? 'Kokoro runs on the machine serving this page; Browser uses whatever voices it has (espeak, on Linux).'
+    : 'No speech server configured — set tts_url in config.toml to add Kokoro.';
+  fillVoices();
+}
+
+$('settingsBtn').onclick = () => {
+  unlockTTS();               // spend the tap: the Test button below needs it
+  $('sheet').hidden = false;
+  fillSheet();
+  if (serverTTS && !kokoroVoices.length) loadKokoroVoices();
+};
+$('sheetClose').onclick = () => { $('sheet').hidden = true; };
+$('sheet').onclick = e => { if (e.target === $('sheet')) $('sheet').hidden = true; };
+
+for (const b of $('sttSeg').children) {
+  b.onclick = () => {
+    sttMode = b.dataset.mode;
+    localStorage.setItem('vp.sttMode', sttMode);
+    // The choice only takes effect on the next turn; don't leave the old path
+    // holding the mic in the meantime.
+    releaseMic();
+    fillSheet();
+  };
+}
+for (const b of $('ttsSeg').children) {
+  b.onclick = () => {
+    ttsEngine = b.dataset.engine;
+    localStorage.setItem('vp.ttsEngine', ttsEngine);
+    stopSpeaking();
+    if (ttsEngine === 'kokoro' && !kokoroVoices.length) loadKokoroVoices();
+    fillSheet();
+  };
+}
+$('voiceSel').onchange = e => {
+  const v = e.target.value;
+  if (!v) return;
+  if (ttsEngineNow() === 'kokoro') {
+    localStorage.setItem('vp.voice.kokoro', v);
+  } else {
+    localStorage.setItem('vp.voice.browser', v);
+    pickVoice();
+  }
+};
+$('voiceTest').onclick = () => {
+  unlockTTS();
+  stopSpeaking();
+  const name = ttsEngineNow() === 'kokoro'
+    ? kokoroLabel(kokoroVoice()).split(' — ')[0]
+    : (ttsVoice ? ttsVoice.name : 'default');
+  speakText('This is ' + name + ', reading a reply from your agent.');
+};
+
+/* ---------- ui wiring ---------- */
+function setDest(d) {
+  dest = d;
+  document.body.classList.toggle('destProject', d === 'project');
+  $('destAdvisor').classList.toggle('on', d === 'advisor');
+  $('destProject').classList.toggle('on', d === 'project');
+  $('send').textContent = d === 'advisor' ? 'Ask' : 'Send ➤';
+  updateTarget();
+}
+$('destAdvisor').onclick = () => setDest('advisor');
+$('destProject').onclick = () => setDest('project');
+
+function setSpeak(on) {
+  speakOn = on;
+  localStorage.setItem('vp.speak', on ? '1' : '0');
+  $('btnSpeak').classList.toggle('on', on);
+  if (on) unlockTTS(); else stopSpeaking();
+}
+function setConvo(on) {
+  handsFree = on;
+  $('btnConvo').classList.toggle('on', on);
+  emptyListens = 0;
+  if (on) {
+    unlockTTS();
+    setDest('advisor');
+    startListen();
+  } else {
+    stopListen();
+    // Convo owns the mic, not the speaker: a reply already being read aloud
+    // finishes on its own, and holds the strip until it does. Speak (or the mic
+    // button) is what stops audio.
+    if (!ttsActive) setVoiceState(null);
+  }
+}
+$('btnSpeak').onclick = () => setSpeak(!speakOn);
+$('btnConvo').onclick = () => setConvo(!handsFree);
+
+$('mic').onclick = () => {
+  unlockTTS();
+  if (ttsActive) { stopSpeaking(); if (handsFree) startListen(); return; }
+  if (listening) {
+    // Hands-free exists to re-arm the mic after every turn, so leaving it on
+    // would restart what this tap just stopped. Tapping the mic off ends the
+    // conversation loop too, which is what "off" has to mean to hold.
+    if (handsFree) setConvo(false);
+    else stopListen();
+  } else startListen();
+};
+
+// Don't hold the mic into a backgrounded or unloaded page.
+addEventListener('pagehide', releaseMic);
+
+$('send').onclick = () => {
+  const text = $('input').value.trim();
+  if (!text) return;
+  if (dest === 'advisor') {
+    $('input').value = ''; autogrow();
+    askAdvisor('discuss', text);
+  } else {
+    sendProject(text);
+  }
+};
+$('btnStatus').onclick = () => { unlockTTS(); askAdvisor('status', ''); };
+$('btnBrainstorm').onclick = () => {
+  unlockTTS();
+  const text = $('input').value.trim();
+  $('input').value = ''; autogrow();
+  askAdvisor('brainstorm', text);
+};
+/* Clears one column's conversation — both the transcript and the stored
+   session id, so the next turn starts genuinely cold rather than merely
+   looking empty. Takes the column rather than reading the focus, because the
+   per-column buttons act on the column they sit in, focused or not. */
+async function clearChat(v) {
+  const key = keyFor(v);
+  if (!key) return;
+  const who = v === 'projects' ? 'the operator' : '"' + current + '"';
+  if (!confirm('Start a new chat with ' + who + '? History will be cleared.')) return;
+  await api('/api/reset', { body: { project: key } });
+  renderHistory([], v);
+}
+$('newchat').onclick = () => clearChat(view);
+$('clearOperator').onclick = () => clearChat('projects');
+$('clearProject').onclick = () => clearChat('project');
+// A full reload, so a new build of the page is picked up too; the view and
+// project come back from localStorage.
+$('refresh').onclick = () => location.reload();
+$('project').onchange = e => selectProject(e.target.value);
+
+function autogrow() {
+  const t = $('input');
+  t.style.height = 'auto';
+  t.style.height = Math.min(t.scrollHeight, 150) + 'px';
+}
+$('input').addEventListener('input', autogrow);
+$('input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('send').click(); }
+});
+
+if (speakOn) $('btnSpeak').classList.add('on');
+setTtsRate(ttsRate);
+metaReady = api('/api/meta').then(m => {
+  voiceOn = m.voice !== false;
+  jiraOn = !!m.jira;
+  jiraUrl = m.jira_url || '';
+  usageOn = !!m.usage;
+  if (m.default_agent) DEFAULT_AGENT = m.default_agent;
+  if (m.tts_rate) setTtsRate(m.tts_rate);
+  for (const a of (m.agents || [])) if (!AGENT_SHORT[a.id]) AGENT_SHORT[a.id] = a.label;
+  document.body.classList.toggle('noVoice', !voiceOn);
+  document.body.classList.toggle('noJira', !jiraOn);
+  if (m.https_port !== undefined) httpsPort = m.https_port;   // 0 = HTTPS is off
+  if (m.http_port) httpPort = m.http_port;
+  summarizeOn = m.summarize !== false;
+  serverSTT = !!m.stt;
+  serverTTS = !!m.tts;
+  operatorOn = !!m.operator;
+  if (m.operator_key) OPERATOR = m.operator_key;
+  if (m.tts_voice) defaultKokoroVoice = m.tts_voice;
+  terminalWeb = m.terminal || null;
+  defaultTtsEngine();
+  if (serverTTS && voiceOn) loadKokoroVoices();
+  serverMusic = m.music !== false;
+  applyMusic();
+}).catch(() => {});
+/* Open on the agent cards, or back in the one project you were talking to —
+   a reload mid-conversation shouldn't lose it. The operator is a tap away. */
+(async () => {
+  try { await metaReady; } catch (e) {}
+  await loadProjects();
+  // Open on something that's actually being watched: the tiles show the
+  // selected projects, so focusing one outside that set looks like a mistake.
+  if (operatorOn && voiceOn) {
+    try {
+      const ov = await api('/api/overview?after=0');
+      const picked = (ov.projects || []).filter(p => p.selected);
+      if (picked.length && !picked.some(p => p.name === current)) current = picked[0].name;
+    } catch (e) {}
+  }
+  // Back where you were: a list, or the one project you were talking to — a
+  // reload mid-conversation shouldn't lose it.
+  // A #home / #repos / #tickets / #talk link opens that tab; else where you were.
+  const hash = location.hash.slice(1), was = localStorage.getItem('vp.view');
+  await setView(LIST_VIEWS.includes(hash) ? hash : hash === 'talk' ? 'project'
+                : ['home', 'repos', 'tickets', 'project'].includes(was) ? was : 'home');
+  // Keep the Agents badge current from any tab.
+  setInterval(() => { if (view !== 'home') loadHome().catch(() => {}); }, 15000);
+})().catch(e => addBubble('err', esc(e.message)));
+</script>
+</body>
+</html>

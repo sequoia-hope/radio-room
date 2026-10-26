@@ -1,0 +1,396 @@
+/* The page is not a page. It is a terminal that happens to be delivered by a
+   browser, so every affordance a document has — scrolling, rubber-banding,
+   pinch-zooming the layout, dragging to select the chrome — is taken away
+   here and handed back only where a terminal actually wants it. */
+
+:root {
+  --bg: #0b0e14;
+  --fg: #d5dae2;
+  --dim: #5c6675;
+  --line: #1d232e;
+  --key: #161b24;
+  --key-hot: #2b3646;
+  --accent: #7fd88f;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  /* Nothing here scrolls the document, and nothing chains a scroll out to it.
+     This is what stops "scrolled to the top of the terminal" from turning
+     into "dragged the whole page down". */
+  overscroll-behavior: none;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  /* A fixed body has nothing to rubber-band, which is the only reliable way
+     to kill iOS overscroll on a full-screen app. */
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Height and offset are set from visualViewport in app.js so the soft
+   keyboard shrinks the terminal instead of sliding it off-screen. */
+#app {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+#term {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* The terminal is not a scrollable box the browser can pan — xterm 6 draws
+     into a canvas and moves the view itself. Handing the browser `pan-y` here
+     means it claims the gesture, finds nothing to scroll, and the drag does
+     nothing at all. `none` gives every touch to xterm and to the pinch
+     handler below, and takes double-tap zoom out of the way as well. */
+  touch-action: none;
+  overflow: hidden;
+}
+
+/* FitAddon reads this padding off the terminal element, so the character grid
+   is sized to the space inside it — text never sits against the bezel and the
+   fit stays exact. */
+#term .xterm {
+  height: 100%;
+  padding: 6px 10px;
+}
+#term .xterm-viewport {
+  overscroll-behavior: contain;
+  background-color: transparent !important;
+}
+
+/* xterm 6 draws its own scrollbar (VS Code's, styled through these variables)
+   rather than using a native one, so native scrollbar properties do nothing
+   here. It fades itself out when idle; these just keep it quiet while visible
+   — enough to show that you are scrolled up, not enough to read as furniture. */
+#term .xterm {
+  --vscode-scrollbarSlider-background: rgba(120, 134, 156, .28);
+  --vscode-scrollbarSlider-hoverBackground: rgba(120, 134, 156, .45);
+  --vscode-scrollbarSlider-activeBackground: rgba(120, 134, 156, .6);
+  --vscode-scrollbar-shadow: transparent;
+}
+
+/* ── touch key row ───────────────────────────────────────────────────────── */
+
+/* `display` here would otherwise beat the hidden attribute, and the bar would
+   show up on desktop. */
+#keys[hidden] { display: none; }
+
+#keys {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 3px;
+  padding: 4px 5px;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  /* No wrap, no scroll: a key row that reflows or slides under your thumb is
+     worse than one that is slightly cramped. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#keys button {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 30px;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--key);
+  color: var(--fg);
+  /* Scaled to sit with the terminal rather than on top of it: against the
+     11px the grid uses on a phone, a 13px label read as a second and louder
+     typeface stacked under the first. */
+  font: 500 11px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+#keys button:active { background: var(--key-hot); }
+#keys button[data-armed] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #08110b;
+}
+
+/* Width follows how hard a key is to hit rather than how wide its label is.
+   One glyph needs far less room than `⇧tab`, so the worded keys are held
+   near their label width — min-content is the floor, so a narrow phone
+   squeezes the glyphs before it clips a word — and what they give up goes to
+   ↓ ↑ ⏎, the three a thumb reaches for repeatedly and without looking. */
+#keys button:not([data-glyph]) { flex: .85 1 0; min-width: min-content; }
+#keys button[data-glyph] { flex: .66 1 0; }
+#keys button[data-wide] { flex: 1.1 1 0; }
+
+/* ── paste sheet ─────────────────────────────────────────────────────────── */
+
+/* A real, focusable textarea is the only thing iOS Safari will surface a
+   long-press "Paste" callout on, and the only way to reach the clipboard from
+   a plain-HTTP page (no secure context, no navigator.clipboard). The sheet
+   sits over the terminal; the textarea is what the callout targets, and a
+   paste into it goes straight to the PTY. */
+#paste {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(11, 14, 20, .6);
+  backdrop-filter: blur(3px);
+}
+#paste[hidden] { display: none; }
+
+#paste-card {
+  width: min(86vw, 520px);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+#paste-hint {
+  margin: 0;
+  color: var(--dim);
+  font: 500 12.5px/1.3 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  text-align: center;
+}
+
+#paste-field {
+  /* Large enough that a thumb long-press lands inside it, and tall enough to
+     show pasted multiline content without the OS callout covering it. */
+  width: 100%;
+  min-height: 120px;
+  flex: 1 1 auto;
+  resize: none;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--key);
+  color: var(--fg);
+  font: 13px/1.3 "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
+            "DejaVu Sans Mono", monospace;
+  /* The whole point: this field has to accept the long-press that the
+     terminal refuses, so it takes the default touch handling. */
+  touch-action: auto;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+#paste-actions {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+}
+
+#paste-image,
+#paste-cancel {
+  flex: 0 0 auto;
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--key);
+  color: var(--fg);
+  font: 500 12.5px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  cursor: pointer;
+}
+#paste-image:active,
+#paste-cancel:active { background: var(--key-hot); }
+
+/* ── connection veil ─────────────────────────────────────────────────────── */
+
+/* Deliberately not a modal: the terminal stays readable underneath, because
+   the most common reason to be looking at this is to check whether the thing
+   behind it is still where you left it. */
+#veil {
+  position: fixed;
+  left: 50%;
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 10;
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(11, 14, 20, .92);
+  backdrop-filter: blur(6px);
+  color: var(--dim);
+  font: 500 12.5px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  letter-spacing: .01em;
+  white-space: nowrap;
+  /* Purely informational unless it is offering an action — it must never
+     swallow a tap meant for the terminal behind it. */
+  pointer-events: none;
+}
+#veil[data-action] { color: var(--fg); cursor: pointer; pointer-events: auto; }
+#veil[hidden] { display: none; }
+
+/* ── project tabs ────────────────────────────────────────────────────────── */
+
+/* The strip is always here, with or without a key row above it, because it is
+   structure rather than a touch affordance — a desktop needs to see which
+   project it is looking at as much as a phone does.
+
+   Its height is fixed rather than taken from its contents. The terminal is
+   sized to whatever is left over, so a strip that grew when the first tab
+   arrived would reflow the character grid out from under you. Everything in
+   here stretches to fill it instead. */
+#tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 3px;
+  height: calc(35px + env(safe-area-inset-bottom, 0px));
+  padding: 4px 5px calc(4px + env(safe-area-inset-bottom, 0px));
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Unlike the key row, this one scrolls. A key row that slides under your thumb
+   is worse than a cramped one, because you reach for those without looking —
+   but a project name you cannot read is no name at all, and there is no
+   sensible width to squeeze `rp2350-motor-controller` into. */
+#tablist {
+  /* Sized to its tabs, shrinking only once they stop fitting. That keeps + at
+     the end of the row on a wide window instead of stranded across the far
+     side of it, and pins it against the right edge exactly when the strip
+     fills up and starts to scroll — which is when it has to stay reachable. */
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  gap: 3px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* This is the one thing on the page that pans, and it must not hand what is
+     left of a scroll to anything else. */
+  overscroll-behavior: contain;
+  touch-action: pan-x;
+  scrollbar-width: none;
+}
+#tablist::-webkit-scrollbar { display: none; }
+
+#tablist button {
+  flex: 0 0 auto;
+  /* Long enough to tell two projects apart, short enough that a third tab is
+     still on screen. Past that the name ellipsises and the strip scrolls. */
+  max-width: 108px;
+  display: flex;
+  align-items: center;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  /* The same 11px the key row uses: this sits with the terminal, not over it. */
+  font: 500 11px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  white-space: nowrap;
+  /* A drag that happens to start on a tab still scrolls the strip. */
+  touch-action: pan-x;
+  cursor: pointer;
+}
+#tablist button:active { background: var(--key); }
+
+#tablist .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#tablist button[data-active] {
+  background: var(--key);
+  border-color: var(--line);
+  color: var(--fg);
+  /* The accent goes on the top edge, where it points at the terminal this tab
+     owns. The strip is at the bottom of the screen, so the thing a tab belongs
+     to is above it. */
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+/* A tab whose shell has exited keeps its place — it is still yours to restart
+   or to close — but it stops looking live. */
+#tablist button[data-dead] .label { font-style: italic; opacity: .65; }
+
+/* Only the tab in front offers to close, which keeps a reach for a neighbour
+   from ending it, and means you always see what you are closing. There is no
+   × on the last tab at all: there is always a terminal. */
+#tablist .close {
+  flex: 0 0 auto;
+  padding: 0 2px 0 5px;
+  margin-right: -3px;
+  color: var(--dim);
+  font-size: 14px;
+}
+#tablist button:not([data-active]) .close,
+#tabs[data-single] .close { display: none; }
+
+#newtab {
+  flex: 0 0 auto;
+  width: 26px;
+  /* A little air, so a thumb going for + does not land on the close button of
+     an active tab that has been scrolled up against it. */
+  margin-left: 2px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--key);
+  color: var(--dim);
+  font: 400 15px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+#newtab:active { background: var(--key-hot); color: var(--fg); }
+#newtab[hidden] { display: none; }
+
+/* Held, not tapped, so nothing about it may turn a long press into something
+   else: no pan, no text selection, no iOS callout. The ring follows the input
+   level, which is the only way to tell from the phone that audio is flowing. */
+#mic {
+  flex: 0 0 auto;
+  width: 34px;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--key);
+  color: var(--dim);
+  touch-action: none;
+  -webkit-touch-callout: none;
+  cursor: pointer;
+  --level: 0;
+}
+#mic svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+#mic[data-busy] { color: var(--fg); }
+#mic[data-live] {
+  background: #3a1d22;
+  border-color: #f06c75;
+  color: #ff8b91;
+  box-shadow: 0 0 0 calc(var(--level) * 5px) rgba(240, 108, 117, 0.45);
+}

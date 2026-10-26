@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- interactive-widget=resizes-content keeps the soft keyboard from shoving the
+     whole page upward; we resize to visualViewport ourselves instead. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>launcher</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230b0e14'/><path d='M7 10l6 6-6 6M16 22h9' stroke='%237fd88f' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<link rel="stylesheet" href="vendor/xterm.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+  <div id="term"></div>
+
+  <!-- Only shown on touch devices. Mostly keys a soft keyboard does not have
+       at all; ⏎ is here because the keyboard's own return key is a thumb
+       trip away from this row.
+
+       data-glyph marks the keys whose label is one character wide, so the
+       stylesheet can hand their spare width to the worded ones. -->
+  <div id="keys" hidden>
+    <button tabindex="-1" data-glyph data-launcher title="Back to the launcher">&#9167;</button>
+    <button tabindex="-1" data-send="&#x1b;">esc</button>
+    <button tabindex="-1" data-send="&#9;">tab</button>
+    <button tabindex="-1" data-send="&#x1b;[Z">&#8679;tab</button>
+    <button tabindex="-1" data-ctrl>ctrl</button>
+    <button tabindex="-1" data-paste title="Paste">paste</button>
+    <button tabindex="-1" data-shift data-arrow="A">&#8679;&#8593;</button>
+    <button tabindex="-1" data-shift data-arrow="B">&#8679;&#8595;</button>
+    <button tabindex="-1" data-glyph data-arrow="D">&#8592;</button>
+    <button tabindex="-1" data-glyph data-wide data-arrow="B">&#8595;</button>
+    <button tabindex="-1" data-glyph data-wide data-arrow="A">&#8593;</button>
+    <button tabindex="-1" data-glyph data-arrow="C">&#8594;</button>
+    <button tabindex="-1" data-glyph data-wide data-send="&#13;" title="Enter">&#9166;</button>
+    <button tabindex="-1" data-glyph data-blur>&#9660;</button>
+  </div>
+
+  <!-- Project tabs. Below the key row because the keys belong to the terminal
+       and the tabs belong to the session, and because a strip you look at
+       should not sit between your thumb and the keys it reaches for blind.
+
+       Filled in from the server: the tabs are yours to open and close, but
+       nothing here names one — each is called whatever it is showing. -->
+  <div id="tabs">
+    <div id="tablist"></div>
+    <button id="newtab" tabindex="-1" title="New tab, at the launcher">+</button>
+    <!-- Hold to talk: this browser's microphone becomes the server's, and the
+         held button is a held space bar as far as Claude's voice mode can
+         tell. Here rather than on the key row so a desktop gets it too. -->
+    <button id="mic" tabindex="-1" title="Hold to talk (Claude voice mode)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4"/></svg>
+    </button>
+  </div>
+</div>
+
+<div id="veil" hidden><span id="veil-text"></span></div>
+
+<!-- The paste sheet. iOS Safari will not surface a "Paste" callout on the
+     terminal itself: #term has touch-action: none for the scroll/glide
+     gesture, and navigator.clipboard is unavailable because the page is served
+     over plain HTTP on the tailnet (not a secure context). So the paste key
+     raises this sheet with a real, focusable textarea that the OS long-press
+     callout will target, and the paste event hands the text to the PTY. -->
+<div id="paste" hidden>
+  <div id="paste-card">
+    <p id="paste-hint">long-press the field, then Paste &mdash; text or an image</p>
+    <textarea id="paste-field" autocomplete="off" autocorrect="off"
+              autocapitalize="off" spellcheck="false"></textarea>
+    <div id="paste-actions">
+      <button id="paste-image" tabindex="-1" title="Send the agent a photo or screenshot">image&hellip;</button>
+      <button id="paste-cancel" tabindex="-1">cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<script src="vendor/addon-webgl.js"></script>
+<script src="vendor/addon-unicode11.js"></script>
+<script src="vendor/addon-web-links.js"></script>
+<script src="app.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,156 @@
+# Radio Room configuration — copy to ~/.config/radio-room/config.toml (or point
+# $RADIO_ROOM_CONFIG at it). Every key is optional; the defaults are shown.
+#
+# Without this file you get the lean setup: the project list, the desktop
+# window with real terminals, and each agent's status. The rest is opt-in.
+#
+# Ports are never set here. Every server asks the registry (`proj port`).
+
+# The project list. `proj add NAME DIR` writes it; it is plain TOML, so it can
+# be edited by hand too (the schema is at the top of core/registry.py).
+projects = "~/.config/radio-room/projects.toml"
+
+# Agents to offer, in order; the first is the default (the one a project's
+# base tmux session runs). Empty means every built-in agent whose command is
+# on PATH: claude, agy, copilot.
+agents = []
+
+# Per-agent overrides, and agents that aren't built in. Keys: cmd, label,
+# type (the status store's name for it), suffix (its session's suffix beside
+# the project's base session name).
+#
+# [agent.copilot]
+# cmd = "copilot --allow-all-tools"
+#
+# [agent.opencode]
+# cmd = "opencode"
+# label = "opencode"
+
+# The registry project that serves the voice server (feature "voice").
+voice_project = "radio-room"
+
+# Where `proj add --worktree` (and the window's "+ worktree") puts a new
+# worktree. {repo} is the main checkout, {parent} its parent directory,
+# {reponame} its name, {name} the new project's name.
+worktree_dir = "{parent}/{reponame}.worktrees/{name}"
+
+# Jira — on when url is set. Cloud or Data Center is asked of the server.
+# The token is never written here: token_cmd prints it, else the variable
+# token_env names, else token_file.
+[jira]
+url = ""
+email = ""                # Cloud: the account the API token belongs to;
+                          # leave empty for a Data Center personal access token
+token_cmd = ""            # e.g. "secret-tool lookup service jira"
+token_env = "JIRA_TOKEN"
+token_file = ""
+projects = []             # project keys, e.g. ["ABC"]: a branch naming abc-123
+                          # links ABC-123 (without, only upper-case keys count)
+jql = "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
+default_project = ""      # for new tickets
+issue_type = "Task"
+max_results = 50
+
+[features]
+voice = false       # the voice server: phone UI, Sonnet advisor, speech; the
+                    # desktop window then shows its page and follows it
+launcher = false    # the desktop window's launcher tab (bash -li with
+                    # SSH_CLIENT_WEB=1, for a ~/.bashrc that starts a launcher)
+usage = false       # Claude Code / Antigravity quota and per-project tokens
+summaries = false   # one-line summaries of each finished turn from a local
+                    # Ollama model (see [status] summary_*)
+
+# Agent status: hooks report most of it (voice/hooks/install.py), and a pane
+# monitor covers questions, menus, containers and agents without hooks.
+[status]
+status_poll = 5           # seconds between pane checks
+status_settle = 30        # an idle pane this long ends a "working" state whose
+                          # Stop never arrived
+summary_ollama_url = "http://127.0.0.1:11434"
+summary_local_model = "granite4:1b"
+summary_keep_alive = "30m"
+summary_num_ctx = 2048
+summary_num_gpu = -1      # layers on the GPU; -1 = Ollama decides, 0 = CPU only
+summary_local_timeout = 120
+summary_window = 21600    # only turns this recent (s) get summarized
+summary_retry = 600       # retry a failed summary after this long (s)
+# Transcript directories that aren't a project's own (moved, or a container's
+# mount point), mapped to the project they belong to — for "usage".
+# dir_aliases = { "/workspace" = "my-container-project" }
+
+# The voice server (feature "voice"): voice/server.py.
+[voice]
+# Where it listens: "local" (this machine only), "tailscale" (this machine and
+# the tailnet), "any" (every interface, the LAN included), or an address.
+# Anyone who reaches it can prompt your agents, so anything wider than
+# "tailscale" refuses to start without a token — or allow_no_token = true, for
+# a network you trust some other way.
+bind = "local"
+allow_no_token = false
+pane_lines = 200          # lines of scrollback attached to each advisor message
+
+# The advisor runs via `claude -p` with your existing Claude Code auth; tools
+# are read-only in the project directory. Haiku where latency matters.
+claude_bin = "claude"
+model = "sonnet"          # typed discussion / brainstorm
+status_model = "haiku"    # one-tap status summaries
+voice_model = "haiku"     # hands-free conversation turns
+allowed_tools = "Read,Glob,Grep"
+chat_timeout = 600
+
+# Let the advisor submit prompts to the project's agent itself (through the
+# bundled MCP server). Asking is the confirmation.
+send_tool = true
+
+# After a prompt goes to the agent, watch its pane until it goes quiet, then
+# have the advisor sum up what it did.
+summarize = true
+summary_model = "haiku"
+summary_poll = 3
+summary_settle = 9
+summary_timeout = 1800
+
+# Multi-project mode: an operator that watches several agents at once.
+operator = true
+operator_pane_lines = 60
+operator_max_panes = 8
+
+# Background music from musicforprogramming.net, streamed to the browser — an
+# option each browser turns on in ⚙ (off by default). false removes the option.
+music = true
+music_feed = "https://musicforprogramming.net/rss.xml"
+music_ttl = 21600
+
+# Local speech servers; empty uses the browser's own speech. Speech to text is
+# any OpenAI-compatible /v1/audio/transcriptions; text to speech is
+# Kokoro-FastAPI or anything serving /v1/audio/speech.
+stt_url = ""
+stt_model = "Systran/faster-whisper-medium"
+stt_language = "en"
+stt_timeout = 120
+tts_url = ""
+tts_model = "kokoro"
+tts_voice = "af_heart"
+tts_format = "mp3"
+tts_timeout = 120
+
+# The browser terminal behind each agent card's "Terminal" button — a
+# registry project (terminal/ in this repo). "" hides the button.
+terminal_project = ""
+
+# Shared secret. If set, the web UI asks for it once. Required for a bind
+# wider than "tailscale" (see above).
+# token = "pick-something-long"
+
+# tmux targets are worked out by the registry; override the default agent's
+# per project if that is wrong:
+# [voice.targets.myproject]
+# type = "local"            # or "docker"
+# session = "mysession"
+# container = "my-container"  # docker only
+
+# The CPU reservation queue (reserve/).
+[reserve]
+# Same values as [voice] bind. Its page can cancel and stop jobs, unauthenticated.
+# Agents in docker containers reach it through the docker gateway, which takes "any".
+bind = "local"

@@ -1,0 +1,5 @@
+{
+  "name": "voice-prompt",
+  "description": "Guidance for the voice_prompt phone advisor: dispatching prompts to a project's tmux coding agent by voice.",
+  "version": "1.0.0"
+}

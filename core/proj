@@ -1,0 +1,1005 @@
+#!/usr/bin/env python3
+"""proj — register projects and their centrally allocated web ports.
+
+    proj list                     every project, its port and whether it is up
+    proj add NAME --worktree REPO [--branch B] [--from REF] [--subdir D] [--jira KEY]
+                                  a new worktree of REPO, registered as a project
+    proj worktrees                every worktree of the repos in use, registered or not
+    proj jira [list|show|link|unlink|comment|move|new]   tickets (see proj jira -h)
+    proj agent NAME [AGENT]       start a project's agent session and attach
+    proj stop NAME [AGENT]        kill a project's agent session
+    proj ports                    the full port map, including squatters
+    proj add NAME DIR [options]   register a project; allocates the next free port
+    proj rm NAME                  unregister
+    proj set NAME KEY=VALUE ...   edit registry fields
+    proj up NAME | down NAME      start/stop a web instance in tmux
+    proj url NAME                 print its URL
+    proj port [NAME]              print its port — with no name, the cwd's
+    proj alloc                    print the next free port and exit
+    proj doctor                   audit what is listening against the registry
+
+`proj add` is the whole registration story in one command: it appends the
+project to the registry (so the desktop window, the voice server and the hub
+all see it) and allocates a port from the pool. Nothing else on the machine
+needs to learn about the new project: its agent session is named after it, and
+`proj agent NAME` starts and attaches to it.
+
+A project that took a port also gets a status page template at index.html, and
+the static server to serve it with, so its entry on the hub opens onto
+something from the first minute instead of a dead link. A directory that
+already answers at its root keeps whatever it has; --no-page skips it.
+"""
+
+import argparse
+import os
+import re
+import sys
+import time
+from datetime import date
+from pathlib import Path
+from string import Template
+
+import git
+import jira
+import registry
+
+# A launch script for a project directory, for those who like `./launch.sh`
+# (`proj add --launch-script`). It only hands over to `proj agent`, so how a
+# session is started stays in the registry.
+LAUNCH_TEMPLATE = """#!/usr/bin/env bash
+# launch.sh — start (or reattach to) this project's agent session.
+#   ./launch.sh [-r] [agent]     -r restarts it; agent defaults to the first offered
+set -euo pipefail
+PROJ="$(command -v proj || echo "{proj}")"
+exec "$PROJ" agent {name} "$@"
+"""
+
+STATUS_TEMPLATE = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>$name — status</title>
+<style>
+/* Same palette as the hub dashboard, so a project page and the project list
+   read as one system when you tab between them. */
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --line: #e2e5ea; --fg: #14171c;
+  --muted: #5f6875; --accent: #2f6feb; --up: #1a9c5b; --warn: #b7791f;
+  --down: #98a1ae; --chip: #eef1f5;
+  --shadow: 0 1px 2px rgba(16,20,28,.06), 0 4px 12px rgba(16,20,28,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1116; --card: #171b22; --line: #262c36; --fg: #e6e9ee;
+    --muted: #8b94a3; --accent: #5b9bff; --up: #35c07d; --warn: #d9a441;
+    --down: #4d5563; --chip: #222833; --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding: 0 0 3rem;
+}
+header, main, footer { max-width: 900px; margin: 0 auto; padding: 0 1.25rem; }
+header { padding-top: 1.75rem; padding-bottom: 1rem; }
+.title { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+h1 { font-size: 1.5rem; margin: 0; letter-spacing: -.015em; }
+h2 {
+  font-size: .78rem; margin: 0 0 .6rem; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--muted); font-weight: 650;
+}
+.state {
+  display: inline-flex; align-items: center; gap: .4rem; border-radius: 999px;
+  padding: .2rem .65rem; font-size: .76rem; font-weight: 600;
+  background: var(--chip); border: 1px solid var(--line); color: var(--muted);
+}
+.state .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--down); }
+.state.active { color: var(--up); border-color: color-mix(in srgb, var(--up) 35%, var(--line)); }
+.state.active .dot { background: var(--up); box-shadow: 0 0 0 3px color-mix(in srgb, var(--up) 22%, transparent); }
+.state.blocked { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, var(--line)); }
+.state.blocked .dot { background: var(--warn); }
+.lede { color: var(--muted); font-size: .95rem; margin: .55rem 0 0; }
+main { display: grid; gap: .9rem; }
+.card {
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  padding: 1rem 1.1rem 1.1rem; box-shadow: var(--shadow);
+}
+.cols { display: grid; gap: .9rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+ul { margin: 0; padding-left: 1.15rem; }
+li { margin: .25rem 0; }
+ul.checks { list-style: none; padding-left: 0; }
+ul.checks li { display: flex; gap: .55rem; align-items: baseline; }
+ul.checks li::before { content: "○"; color: var(--muted); font-size: .9em; }
+ul.checks li.done { color: var(--muted); }
+ul.checks li.done::before { content: "●"; color: var(--up); }
+.log { display: grid; gap: .7rem; }
+.entry { display: grid; grid-template-columns: 5.5rem 1fr; gap: .75rem; align-items: baseline; }
+.entry time { color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
+.todo { color: var(--muted); font-style: italic; }
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em;
+  background: var(--chip); border: 1px solid var(--line);
+  border-radius: 5px; padding: .06em .35em;
+}
+a { color: var(--accent); }
+footer { margin-top: 1.5rem; color: var(--muted); font-size: .8rem; }
+@media (max-width: 480px) { .entry { grid-template-columns: 1fr; gap: .1rem; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title">
+    <h1>$name</h1>
+    <span class="state"><span class="dot"></span>Not started</span>
+  </div>
+  <p class="lede todo">One line on what this project is and who it is for — replace this.</p>
+</header>
+
+<main>
+
+  <section class="card">
+    <h2>Where it stands</h2>
+    <p class="todo">A paragraph of honest current state: what exists, what runs,
+    what is still a sketch. Update this whenever the answer changes.</p>
+  </section>
+
+  <div class="cols">
+    <section class="card">
+      <h2>Working</h2>
+      <ul class="checks">
+        <li class="done">Project registered on port $port</li>
+        <li class="done"><span class="todo">…the next thing that actually works</span></li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Next up</h2>
+      <ul class="checks">
+        <li class="todo">The next concrete step</li>
+        <li class="todo">The one after that</li>
+      </ul>
+    </section>
+  </div>
+
+  <div class="cols">
+    <section class="card">
+      <h2>Open questions</h2>
+      <ul>
+        <li class="todo">Decisions not yet made, and what they hinge on.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Blocked on</h2>
+      <ul>
+        <li class="todo">Nothing yet.</li>
+      </ul>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Log</h2>
+    <div class="log">
+      <div class="entry">
+        <time datetime="$date">$date</time>
+        <div>Project created and registered with the hub. Status page scaffolded.</div>
+      </div>
+      <div class="entry todo">
+        <time>YYYY-MM-DD</time>
+        <div>Newest entries on top.</div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  Served from <code>$dir</code> on port $port —
+  <code>proj up $name</code> to start, <code>proj down $name</code> to stop.
+</footer>
+
+</body>
+</html>
+"""
+
+# The server `proj add` scaffolds next to the status page, and what web_start
+# then points at. It exists so that the shortest way to serve a project by hand
+# is also the compliant one: the alternative people reach for otherwise is
+# `python3 -m http.server <some number they picked>`, which is exactly how ports
+# escape the registry.
+SERVE_TEMPLATE = """#!/usr/bin/env bash
+# serve.sh — serve this project on its registered port.
+#
+# The number lives in the registry, never in this
+# file: $PORT when the hub started us, otherwise `proj port`, which resolves
+# this directory to the project registered for it. There is deliberately no
+# fallback default — a project that cannot find its port should say so rather
+# than quietly bind whatever looked free.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+PROJ="$(command -v proj || echo "@PROJ@")"
+PORT="${PORT:-$("$PROJ" port)}"
+
+exec python3 -m http.server "$PORT" --bind 0.0.0.0
+"""
+PROJ_PATH = str(Path(__file__).resolve())
+
+# Source files worth scanning for a hardcoded copy of a project's own port.
+# Prose is deliberately excluded: the concern is code that binds a socket, not
+# a README or the scaffolded status page mentioning the number in passing.
+SCAN_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".svelte",
+                 ".sh", ".bash", ".toml", ".json", ".yaml", ".yml", ".rs", ".go",
+                 ".c", ".cc", ".cpp", ".h", ".hpp", ".service", ".conf", ".env"}
+SKIP_DIRS = {"node_modules", "__pycache__", "venv", "env", "dist", "build",
+             "target", "site-packages", "models", "output", "outputs", "custom_nodes"}
+MAX_SCAN_BYTES = 512 * 1024
+MAX_SCAN_FILES = 4000
+
+GREEN, DIM, BOLD, RED, YELLOW, OFF = (
+    "\033[32m", "\033[2m", "\033[1m", "\033[31m", "\033[33m", "\033[0m")
+
+
+def die(msg: str):
+    print(f"{RED}error:{OFF} {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def tmux_session(name: str) -> str:
+    """A project name tmux can address.
+
+    tmux reads `.` and `:` in a target as pane and window separators, and
+    silently rewrites them to `_` when naming a session — so `-s foo.1` creates
+    `foo_1` and the matching `attach -t foo.1` then fails looking for pane 1.
+    Do the rewrite ourselves so both halves of the script agree.
+    """
+    return name.translate(str.maketrans(".:", "__"))
+
+
+def write_status_page(directory: Path, name: str, port: int) -> Path | None:
+    """Scaffold the status page, unless the directory already answers at its root.
+
+    Only the root is consulted: a project serving a subdirectory (--directory
+    review, web_path = "/out/") is asking for that content specifically, and an
+    index.html beside it would never be the page anyone opens.
+    """
+    if any((directory / f).exists() for f in ("index.html", "index.htm")):
+        return None
+    page = directory / "index.html"
+    # safe_substitute, so a $PORT written into the template survives verbatim.
+    page.write_text(Template(STATUS_TEMPLATE).safe_substitute(
+        name=name, port=port, date=date.today().isoformat(),
+        dir=str(directory).replace(str(Path.home()), "~", 1)))
+    return page
+
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+
+def cmd_list(args):
+    cfg = registry.load()
+    rows = registry.status(cfg)
+    print(f"{BOLD}{'PROJECT':<26} {'PORT':>6} {'CLASS':<10} {'WEB':<7} {'AGENT':<11} DESC{OFF}")
+    for r in rows:
+        port = str(r["port"]) if r["port"] else "-"
+        klass = "-" if not r["port"] else ("adopted" if r["fixed"] else "allocated")
+        web = f"{GREEN}up{OFF}     " if r["up"] else (f"{DIM}down{OFF}   " if r["port"] else f"{DIM}-{OFF}      ")
+        live_agents = [a for a, x in r["agents"].items() if x["up"]]
+        if live_agents:
+            label = "+".join(live_agents)
+            agent = f"{GREEN}{label:<11}{OFF}"
+        else:
+            agent = f"{DIM}{'-':<11}{OFF}"
+        print(f"{r['name']:<26} {port:>6} {klass:<10} {web} {agent} {DIM}{r['desc']}{OFF}")
+    print(f"\n{DIM}pool {cfg['hub']['pool'][0]}-{cfg['hub']['pool'][1]} · "
+          f"hub on {cfg['hub']['port']} · next free {registry.allocate_port(cfg)}{OFF}")
+
+
+def cmd_ports(args):
+    cfg = registry.load()
+    claimed = registry.registered_ports(cfg)
+    live = registry.listening_ports()
+    print(f"{BOLD}{'PORT':>6}  {'OWNER':<26} {'STATE':<9} NOTE{OFF}")
+    for port in sorted(set(claimed) | live):
+        owner = claimed.get(port)
+        state = f"{GREEN}listening{OFF}" if port in live else f"{DIM}closed{OFF}   "
+        if owner is None:
+            print(f"{port:>6}  {DIM}(unregistered){OFF}{'':<12} {state} "
+                  f"{DIM}not in the registry — `proj add` will avoid it{OFF}")
+        else:
+            note = "" if port in live or owner == "hub" else "registered, not running"
+            print(f"{port:>6}  {owner:<26} {state} {DIM}{note}{OFF}")
+
+
+def cmd_alloc(args):
+    print(registry.allocate_port(registry.load()))
+
+
+def cmd_add(args):
+    if args.worktree:
+        return add_worktree(args)
+    if not args.dir:
+        die("give a directory, or --worktree REPO to make one")
+    cfg = registry.load()
+    if registry.find(cfg, args.name):
+        die(f"'{args.name}' is already registered")
+
+    directory = str(Path(args.dir).expanduser().resolve())
+    if not os.path.isdir(directory):
+        if not args.create_dir:
+            die(f"{directory} does not exist (pass --create-dir to make it)")
+        os.makedirs(directory)
+        print(f"created {directory}")
+
+    # When it was added, so the Agents view can show a new project before
+    # anything has run in it.
+    project = {"name": args.name, "dir": directory, "added": int(time.time())}
+    if args.command:
+        project["command"] = args.command
+    elif args.session:
+        project["tmux"] = tmux_session(args.session)
+    if args.desc:
+        project["web_desc"] = args.desc
+
+    # Port: adopt a number the project already owns, allocate one from the pool,
+    # or leave the project web-less entirely.
+    if args.no_web:
+        port = None
+    elif args.fixed_port:
+        port = args.fixed_port
+        holder = registry.registered_ports(cfg).get(port)
+        if holder:
+            die(f"port {port} is already claimed by '{holder}'")
+        project["web_port"] = port
+        project["web_fixed"] = True
+    else:
+        port = args.port or registry.allocate_port(cfg)
+        holder = registry.registered_ports(cfg).get(port)
+        if holder:
+            die(f"port {port} is already claimed by '{holder}'")
+        project["web_port"] = port
+        project["web_fixed"] = False
+
+    if args.host:
+        project["web_host"] = args.host
+
+    # A launch script, if asked for and the directory hasn't got one.
+    script = Path(directory) / "launch.sh"
+    if args.launch_script and not script.exists():
+        script.write_text(LAUNCH_TEMPLATE.format(proj=PROJ_PATH, name=args.name))
+        script.chmod(0o755)
+        print(f"wrote {script} (runs `proj agent {args.name}`)")
+
+    # And a status page, unless told not to or the directory already has one.
+    page = None
+    if port and not args.no_page:
+        page = write_status_page(Path(directory), args.name, port)
+        if page:
+            print(f"wrote {page} (status page template)")
+
+    # Scaffolding the page implies the server that serves it — that is what
+    # keeps the allocated port honest. Anything the caller named wins.
+    web_start = args.web_start
+    if not web_start and page:
+        serve = Path(directory) / "serve.sh"
+        if not serve.exists():
+            serve.write_text(SERVE_TEMPLATE.replace("@PROJ@", PROJ_PATH))
+            serve.chmod(0o755)
+            print(f"wrote {serve} (resolves its port from the registry)")
+        web_start = "./serve.sh"
+    if web_start:
+        project["web_start"] = web_start
+
+    cfg["projects"].append(project)
+    registry.save(cfg)
+
+    print(f"{GREEN}registered{OFF} {BOLD}{args.name}{OFF} → {directory}")
+    if port:
+        klass = "adopted" if project.get("web_fixed") else "allocated from pool"
+        print(f"  port {BOLD}{port}{OFF} ({klass})")
+        if web_start:
+            print(f"  web_start: {web_start}")
+            print(f"  start it:  proj up {args.name}")
+        else:
+            print(f"  {DIM}no web_start set — the hub will link to the port but "
+                  f"cannot start it.{OFF}")
+            print(f"  {DIM}add one with: proj set {args.name} "
+                  f'web_start="python3 serve.py $PORT"{OFF}')
+    else:
+        print("  no web instance")
+
+
+def _agent_args(args) -> tuple[dict, str]:
+    p = registry.find(registry.load(), args.name)
+    if p is None:
+        die(f"no project called '{args.name}'")
+    agent = args.agent or registry.DEFAULT_AGENT
+    if agent not in registry.AGENTS:
+        die(f"unknown agent '{agent}' (offered here: {', '.join(registry.AGENTS)})")
+    return p, agent
+
+
+def cmd_agent(args):
+    p, agent = _agent_args(args)
+    if args.detach:
+        t = registry.start_agent(p, agent, force_restart=args.restart)
+        print(t.get("session") or t["name"])
+        return
+    registry.launch_agent(p, agent, force_restart=args.restart)   # execs tmux
+
+
+def cmd_stop(args):
+    p, agent = _agent_args(args)
+    ok, msg = registry.stop_agent(p, agent)
+    if not ok:
+        die(msg or "not running")
+    print(f"stopped {args.name} ({agent})")
+
+
+def add_worktree(args):
+    branch = args.branch
+    if args.jira and not branch and jira.enabled():
+        try:
+            branch = jira.branch_for(args.jira, jira.Jira().issue(args.jira)["summary"])
+        except jira.JiraError as e:
+            print(f"{YELLOW}warn:{OFF} {e}; naming the branch {args.jira}")
+    try:
+        p = registry.add_worktree_project(args.name, args.worktree, branch=branch,
+                                          base=getattr(args, "from"), subdir=args.subdir or "",
+                                          ticket=args.jira, desc=args.desc or "")
+    except (ValueError, RuntimeError) as e:
+        die(str(e))
+    gi = git.info(p["dir"]) or {}
+    print(f"{GREEN}registered{OFF} {BOLD}{args.name}{OFF} → {p['dir']}")
+    print(f"  worktree of {gi.get('name')} on branch {BOLD}{gi.get('branch')}{OFF}")
+    if args.jira:
+        print(f"  linked to {args.jira}")
+    print(f"  start it:  proj agent {args.name}")
+
+
+def cmd_rm(args):
+    try:
+        for line in registry.remove_project(args.name, worktree=args.worktree, force=args.force):
+            print(line)
+    except (KeyError, ValueError, RuntimeError) as e:
+        die(str(e).strip("'\""))
+
+
+def cmd_worktrees(args):
+    """Every checkout of every repository a registered project lives in."""
+    cfg = registry.load()
+    by_root: dict[str, list[str]] = {}
+    repos: dict[str, str] = {}
+    for p in cfg["projects"]:
+        gi = git.info(p["dir"])
+        if gi:
+            by_root.setdefault(str(Path(gi["root"]).resolve()), []).append(p["name"])
+            repos.setdefault(gi["repo"], p["dir"])
+    for repo, some_dir in sorted(repos.items()):
+        trees = git.worktrees(some_dir)
+        name = (git.info(some_dir) or {}).get("name", repo)
+        print(f"{BOLD}{name}{OFF} {DIM}{repo}{OFF}")
+        for t in trees:
+            names = by_root.get(str(Path(t["path"]).resolve()), [])
+            label = f"{GREEN}{', '.join(names)}{OFF}" if names else f"{DIM}(unregistered){OFF}"
+            tag = "main" if t["main"] else "    "
+            print(f"  {tag} {t['branch'] or '(detached)':<36} {label}  {DIM}{shorten(t['path'])}{OFF}")
+
+
+# ── Jira ─────────────────────────────────────────────────────────────────────
+
+def _jira() -> "jira.Jira":
+    try:
+        return jira.Jira()
+    except jira.JiraError as e:
+        die(str(e))
+
+
+def _linked(cfg: dict) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for p in cfg["projects"]:
+        for k in registry.tickets(p):
+            out.setdefault(k, []).append(p["name"])
+    return out
+
+
+def cmd_jira(args):
+    try:
+        JIRA_COMMANDS[args.jcmd or "list"](args)
+    except jira.JiraError as e:
+        die(str(e))
+
+
+def jira_list(args):
+    issues = _jira().search(getattr(args, "jql", None))
+    links = _linked(registry.load())
+    for i in issues:
+        names = links.get(i["key"])
+        proj = f"  {GREEN}→ {', '.join(names)}{OFF}" if names else ""
+        print(f"{BOLD}{i['key']:<12}{OFF} {i['status'][:14]:<14} {i['summary'][:70]}{proj}")
+    if not issues:
+        print(f"{DIM}no tickets match{OFF}")
+
+
+def jira_show(args):
+    j = _jira()
+    i = j.issue(args.key)
+    print(f"{BOLD}{i['key']}{OFF}  {i['summary']}")
+    print(f"{DIM}{i['type']} · {i['status']} · {i['priority']} · {i['assignee'] or 'unassigned'}{OFF}")
+    print(i["url"])
+    names = _linked(registry.load()).get(i["key"])
+    if names:
+        print(f"linked: {', '.join(names)}")
+    if i["description"]:
+        print("\n" + i["description"].strip())
+    for c in i["comments"][-5:]:
+        print(f"\n{DIM}— {c['author']}, {c['created'][:16]}{OFF}\n{c['body'].strip()}")
+
+
+def jira_link(args):
+    try:
+        registry.link_ticket(args.name, args.key.upper(), unlink=args.jcmd == "unlink")
+    except KeyError as e:
+        die(str(e).strip("'\""))
+    print(f"{args.name} {'un' if args.jcmd == 'unlink' else ''}linked {args.key.upper()}")
+
+
+def jira_comment(args):
+    text = args.text if args.text != "-" else sys.stdin.read()
+    _jira().comment(args.key, text)
+    print(f"commented on {args.key}")
+
+
+def jira_move(args):
+    t = _jira().transition(args.key, args.status)
+    print(f"{args.key} → {t['to']}")
+
+
+def jira_new(args):
+    key = _jira().create(args.summary, args.desc or "", project=args.project,
+                         issue_type=args.type, assign_me=not args.unassigned)
+    print(f"created {BOLD}{key}{OFF}  {jira.Jira().browse_url(key)}")
+    if args.link:
+        registry.link_ticket(args.link, key)
+        print(f"linked to {args.link}")
+
+
+JIRA_COMMANDS = {"list": jira_list, "show": jira_show, "link": jira_link,
+                 "unlink": jira_link, "comment": jira_comment, "move": jira_move,
+                 "new": jira_new}
+
+
+def cmd_set(args):
+    cfg = registry.load()
+    project = registry.find(cfg, args.name)
+    if project is None:
+        die(f"'{args.name}' is not registered")
+    for pair in args.assignments:
+        if "=" not in pair:
+            die(f"expected KEY=VALUE, got '{pair}'")
+        key, _, value = pair.partition("=")
+        if value == "":
+            project.pop(key, None)
+            print(f"  cleared {key}")
+            continue
+        if value.isdigit():
+            parsed = int(value)
+        elif value.lower() in ("true", "false"):
+            parsed = value.lower() == "true"
+        else:
+            parsed = value
+        project[key] = parsed
+        print(f"  {key} = {parsed!r}")
+    registry.save(cfg)
+
+
+def cmd_up(args):
+    cfg = registry.load()
+    project = registry.find(cfg, args.name)
+    if project is None:
+        die(f"'{args.name}' is not registered")
+    ok, message = registry.start_web(project)
+    print(message if ok else f"{RED}{message}{OFF}")
+    sys.exit(0 if ok else 1)
+
+
+def cmd_down(args):
+    cfg = registry.load()
+    project = registry.find(cfg, args.name)
+    if project is None:
+        die(f"'{args.name}' is not registered")
+    ok, message = registry.stop_web(project)
+    print(message if ok else f"{RED}{message}{OFF}")
+    sys.exit(0 if ok else 1)
+
+
+def cmd_url(args):
+    cfg = registry.load()
+    project = registry.find(cfg, args.name)
+    if project is None:
+        die(f"'{args.name}' is not registered")
+    if not project.get("web_port"):
+        die(f"'{args.name}' has no web instance")
+    host = project.get("web_host") or "localhost"
+    scheme = project.get("web_scheme", "http")
+    print(f"{scheme}://{host}:{project['web_port']}{project.get('web_path', '/')}")
+
+
+def cmd_port(args):
+    """Print the port the registry allocated to a project.
+
+    The registry's read side, and the reason no project needs to write its own
+    number down. With no argument it resolves the current directory, so a start
+    script can ask without knowing what it is called in the project list.
+    """
+    cfg = registry.load()
+    if args.name:
+        project = registry.find(cfg, args.name)
+        if project is None:
+            die(f"'{args.name}' is not registered")
+    else:
+        cwd = Path.cwd()
+        matches = registry.projects_for_dir(cfg, cwd)
+        if not matches:
+            die(f"{shorten(cwd)} is not inside a registered project — "
+                f"register it with `proj add`")
+        with_port = [m for m in matches if m.get("web_port")]
+        if len(with_port) > 1:
+            names = ", ".join(m["name"] for m in with_port)
+            die(f"{shorten(Path(matches[0]['dir']))} is shared by {names} — "
+                f"say which: proj port NAME")
+        if not with_port:
+            die(f"'{matches[0]['name']}' is registered without a web instance")
+        project = with_port[0]
+    if not project.get("web_port"):
+        die(f"'{project['name']}' has no web instance")
+    print(project["web_port"])
+
+
+def shorten(path) -> str:
+    text = str(path)
+    home = str(Path.home())
+    return "~" + text[len(home):] if text.startswith(home) else text
+
+
+# A line that looks like it is choosing a port to bind, rather than merely
+# mentioning one. Used to catch a default pointing at a number the registry has
+# already given to somebody else — ebook's serve.py defaulted to 8000, which is
+# the hub's own port, and no scan for ebook's *own* port would ever see it.
+PORT_DEFAULT_RE = re.compile(
+    r"(?:default\s*=\s*|(?:^|[^\w])(?:port|PORT)\s*[=:]\s*|--port[= ])(\d{4,5})\b")
+
+
+def looks_like_identifier(line: str, start: int, end: int) -> bool:
+    """True when a number sits inside a hyphenated identifier rather than
+    standing alone as a port.
+
+    A UUID like cd2b77e9-8012-4680 has alphanumerics on the far side of its
+    hyphens; a shell default like ${PORT:-8035} does not. Rejecting every
+    hyphen-adjacent number would hide exactly the fallbacks worth finding.
+    """
+    before = line[start - 1] if start else ""
+    before2 = line[start - 2] if start >= 2 else ""
+    after = line[end] if end < len(line) else ""
+    after2 = line[end + 1] if end + 1 < len(line) else ""
+    return ((before == "-" and before2.isalnum())
+            or (after == "-" and after2.isalnum()))
+
+
+def scan_project(directory: Path, own_port: int, claimed: dict[int, str],
+                 name: str, limit: int = 4, others: frozenset = frozenset()):
+    """Source lines where a project writes a port number down itself.
+
+    Two kinds, both a second copy of something the registry already owns:
+
+      own      the project's own allocated number, spelled out in its source.
+               It matches today by luck — the registry can reallocate, and the
+               file can be lifted into the next project, with nothing noticing.
+
+      foreign  a bind-shaped default naming a port the registry gave to another
+               project. This is the one that actually collides.
+
+    One hit per file, capped, because the point is to name the file to go and
+    fix rather than to be exhaustive.
+    """
+    pattern = re.compile(rf"(?<![\w.]){own_port}(?![\d])")
+    hits, scanned = [], 0
+    for root, dirs, files in os.walk(directory):
+        # A nested checkout is vendored upstream code, not this project's source,
+        # and its ports are not this project's to fix — deepseek carries a whole
+        # llama.cpp tree that would otherwise dominate the findings.
+        # Likewise a subdirectory registered as a project of its own: its source
+        # is scanned, and judged, as that one.
+        dirs[:] = [d for d in dirs
+                   if d not in SKIP_DIRS and not d.startswith(".")
+                   and not (Path(root) / d / ".git").exists()
+                   and str(Path(root) / d) not in others]
+        for filename in sorted(files):
+            if len(hits) >= limit or scanned >= MAX_SCAN_FILES:
+                return hits
+            path = Path(root) / filename
+            if path.suffix not in SCAN_SUFFIXES:
+                continue
+            scanned += 1
+            try:
+                if path.stat().st_size > MAX_SCAN_BYTES:
+                    continue
+                text = path.read_text(errors="replace")
+            except OSError:
+                continue
+            for number, line in enumerate(text.splitlines(), 1):
+                stripped = line.strip()
+                # Comment prose mentioning the port is not what goes stale in a
+                # way that breaks anything — code that binds it is.
+                if stripped.startswith(("#", "//", "*", "/*")):
+                    continue
+                own = pattern.search(line)
+                if own and looks_like_identifier(line, own.start(), own.end()):
+                    own = None
+                foreign = PORT_DEFAULT_RE.search(line)
+                if foreign:
+                    other = int(foreign.group(1))
+                    holder = claimed.get(other)
+                    if holder and holder != name:
+                        hits.append(("foreign", path, number, stripped[:78], holder))
+                        break
+                if own:
+                    hits.append(("own", path, number, stripped[:78], None))
+                    break
+    return hits
+
+
+# Commands that plausibly publish a project over HTTP. Anything else listening
+# inside a project tree — adb's fork-server, a headless Chrome — merely
+# inherited its working directory and is not the project escaping the registry.
+SERVER_HINTS = re.compile(
+    r"http\.server|python[\d.]*\s+\S*serv|\bserve\b|\bvite\b|uvicorn|gunicorn|"
+    r"waitress|flask|fastapi|\bnext\b|webpack|\bhttpd\b|nginx|caddy|live-server",
+    re.I)
+
+
+def looks_like_server(cmd: str) -> bool:
+    return bool(SERVER_HINTS.search(cmd or ""))
+
+
+def start_honours_port(project: dict) -> bool:
+    """Whether a project's start command actually receives its allocated port.
+
+    Two legal forms, both of which registry.start_web() supports: the number
+    substituted textually into web_start ("serve.py $PORT"), or the exported
+    PORT environment variable read inside the script web_start names. Following
+    the script matters — bikesim's web_start is a bare ./start-dev.sh that reads
+    ${PORT} on line 15, and judging it on the command string alone calls a
+    compliant project broken.
+    """
+    start = project.get("web_start", "")
+    if "PORT" in start:
+        return True
+    if not start.startswith("./"):
+        return False
+    script = Path(project["dir"]) / start[2:].split()[0]
+    try:
+        return "PORT" in script.read_text(errors="replace")
+    except OSError:
+        return False
+
+
+def cmd_doctor(args):
+    """Audit the registry against what is actually listening on the machine.
+
+    Every check here exists because the $PORT contract is push-only: it holds
+    while the hub starts a project and says nothing about any other way the
+    project might come up. This is the part that notices when that happened.
+    """
+    cfg = registry.load()
+    findings = []
+
+    def report(level, subject, headline, detail=""):
+        findings.append((level, subject, headline, detail))
+
+    # Two projects claiming one port. registered_ports() keeps the first writer
+    # and drops the rest, so a hand-edited collision in the project list is
+    # otherwise invisible until one of them fails to bind.
+    owners: dict[int, list[str]] = {}
+    for project in cfg["projects"]:
+        for port in registry.project_ports(project):
+            names = owners.setdefault(port, [])
+            if project["name"] not in names:
+                names.append(project["name"])
+    for port, names in sorted(owners.items()):
+        if len(names) > 1:
+            report("error", names[0], f"port {port} is claimed by {len(names)} projects",
+                   " and ".join(names))
+
+    # An allocated port the start command never receives: the registry hands
+    # over $PORT and the command binds something else of its own choosing.
+    for project in cfg["projects"]:
+        start = project.get("web_start")
+        if (start and project.get("web_port") and not project.get("web_fixed")
+                and not start_honours_port(project)):
+            report("error", project["name"], "web_start never receives $PORT",
+                   f"{start} — registry allocated {project['web_port']}")
+
+    # What is actually listening, and whether the registry knows about it.
+    claimed = registry.registered_ports(cfg)
+    roots = {Path(p["dir"]).expanduser().resolve().parent for p in cfg["projects"]}
+    for port, procs in sorted(registry.listeners().items()):
+        owner = claimed.get(port)
+        for proc in procs:
+            cwd = proc.get("cwd")
+            if not cwd:
+                continue
+            here = Path(cwd)
+            matches = [m["name"] for m in registry.projects_for_dir(cfg, cwd)]
+            if matches and owner is None:
+                if looks_like_server(proc["cmd"]):
+                    report("error", matches[0], f"serving on unregistered port {port}",
+                           f"{proc['cmd'][:64]} in {shorten(here)}")
+                else:
+                    report("warn", matches[0],
+                           f"unregistered listener on {port} in its tree",
+                           f"{proc['cmd'][:64]} — looks like tooling, not the project")
+            elif matches and owner not in matches and owner != "hub":
+                report("warn", owner or "?",
+                       f"port {port} is registered to '{owner}' but served from "
+                       f"{matches[0]}'s tree", shorten(here))
+            elif not matches and owner is None and any(
+                    r == here or r in here.parents for r in roots):
+                if looks_like_server(proc["cmd"]):
+                    report("error", "(unregistered)",
+                           f"port {port} serves a directory no project owns",
+                           f"{shorten(here)} — `proj add` it, or stop it")
+
+    # A port written into the project's own source as well as the registry.
+    if not args.no_scan:
+        project_dirs = frozenset(str(Path(p["dir"])) for p in cfg["projects"])
+        for project in cfg["projects"]:
+            port = project.get("web_port")
+            if not port or project.get("web_fixed"):
+                continue  # adopted ports are *meant* to live in the project
+            directory = Path(project["dir"])
+            if not directory.is_dir():
+                continue
+            for kind, path, number, line, holder in scan_project(
+                    directory, port, claimed, project["name"],
+                    others=project_dirs - {str(directory)}):
+                if kind == "foreign":
+                    report("error", project["name"],
+                           f"source binds a port owned by '{holder}'",
+                           f"{shorten(path)}:{number}  {line}")
+                else:
+                    report("warn", project["name"], "hardcodes its own port in source",
+                           f"{shorten(path)}:{number}  {line}")
+
+    if not findings:
+        print(f"{GREEN}clean{OFF} — every listener matches what the registry says")
+        return
+    rank = {"error": 0, "warn": 1}
+    for level, subject, headline, detail in sorted(findings, key=lambda f: rank[f[0]]):
+        tag = f"{RED}error{OFF}" if level == "error" else f"{YELLOW}warn {OFF}"
+        print(f"{tag}  {BOLD}{subject:<24}{OFF} {headline}")
+        if detail:
+            print(f"       {DIM}{detail}{OFF}")
+    errors = sum(1 for f in findings if f[0] == "error")
+    print(f"\n{errors} error(s), {len(findings) - errors} warning(s)")
+    sys.exit(1 if errors else 0)
+
+
+# ── Entry point ──────────────────────────────────────────────────────────────
+
+def main():
+    ap = argparse.ArgumentParser(prog="proj", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("list", help="every project, its port and status").set_defaults(fn=cmd_list)
+    sub.add_parser("ports", help="the full port map").set_defaults(fn=cmd_ports)
+    sub.add_parser("alloc", help="print the next free port").set_defaults(fn=cmd_alloc)
+
+    p = sub.add_parser("port", help="print a project's port (defaults to the cwd's)")
+    p.add_argument("name", nargs="?", help="project name; omit to resolve the cwd")
+    p.set_defaults(fn=cmd_port)
+
+    p = sub.add_parser("doctor", help="audit listeners and source against the registry")
+    p.add_argument("--no-scan", action="store_true",
+                   help="skip the source scan for hardcoded ports")
+    p.set_defaults(fn=cmd_doctor)
+
+    p = sub.add_parser("add", help="register a project")
+    p.add_argument("name")
+    p.add_argument("dir", nargs="?", help="its directory (not with --worktree)")
+    p.add_argument("--worktree", metavar="REPO",
+                   help="make a new worktree of REPO (a project name or a path) for it")
+    p.add_argument("--branch", help="worktree branch (default: from --jira, else NAME)")
+    p.add_argument("--from", metavar="REF", help="base for a new branch (default: HEAD)")
+    p.add_argument("--subdir", help="register this directory inside the worktree")
+    p.add_argument("--jira", metavar="KEY", help="link a ticket (and name the branch for it)")
+    p.add_argument("--command",
+                   help="an existing launch script that names the session (SESSION=...)")
+    p.add_argument("--session", help="agent tmux session name (default: the project's)")
+    p.add_argument("--launch-script", action="store_true",
+                   help="write a launch.sh that runs `proj agent NAME`")
+    p.add_argument("--desc", help="one-line description shown on the dashboard")
+    p.add_argument("--web-start", help='how to serve it, e.g. "python3 serve.py $PORT"')
+    p.add_argument("--port", type=int, help="allocate this specific pool port")
+    p.add_argument("--fixed-port", type=int,
+                   help="adopt a port the project hardcodes itself")
+    p.add_argument("--host", help="only if the service binds one specific IP")
+    p.add_argument("--no-web", action="store_true", help="register without a web instance")
+    p.add_argument("--no-page", action="store_true",
+                   help="skip the scaffolded status page")
+    p.add_argument("--create-dir", action="store_true", help="mkdir the directory if absent")
+    p.set_defaults(fn=cmd_add)
+
+    p = sub.add_parser("agent", help="start a project's agent session and attach to it")
+    p.add_argument("name")
+    p.add_argument("agent", nargs="?", help="which agent (default: the first offered)")
+    p.add_argument("-r", "--restart", action="store_true", help="kill and restart it first")
+    p.add_argument("-d", "--detach", action="store_true", help="start it, don't attach")
+    p.set_defaults(fn=cmd_agent)
+
+    p = sub.add_parser("stop", help="kill a project's agent session")
+    p.add_argument("name")
+    p.add_argument("agent", nargs="?")
+    p.set_defaults(fn=cmd_stop)
+
+    p = sub.add_parser("rm", help="unregister a project")
+    p.add_argument("name")
+    p.add_argument("--worktree", action="store_true",
+                   help="also remove the linked worktree it lives in (the branch is kept)")
+    p.add_argument("--force", action="store_true", help="even with uncommitted changes")
+    p.set_defaults(fn=cmd_rm)
+
+    sub.add_parser("worktrees", help="every worktree of the repos in use"
+                   ).set_defaults(fn=cmd_worktrees)
+
+    p = sub.add_parser("jira", help="tickets: list, show, link, comment, move, new")
+    p.set_defaults(fn=cmd_jira, jcmd=None)
+    js = p.add_subparsers(dest="jcmd")
+    q = js.add_parser("list", help="your tickets (the config's jql)")
+    q.add_argument("--jql")
+    q = js.add_parser("show", help="one ticket in full")
+    q.add_argument("key")
+    for verb in ("link", "unlink"):
+        q = js.add_parser(verb, help=f"{verb} a ticket and a project")
+        q.add_argument("name")
+        q.add_argument("key")
+    q = js.add_parser("comment", help="comment on a ticket ('-' reads stdin)")
+    q.add_argument("key")
+    q.add_argument("text")
+    q = js.add_parser("move", help="move a ticket to a status (or by transition name)")
+    q.add_argument("key")
+    q.add_argument("status")
+    q = js.add_parser("new", help="open a ticket")
+    q.add_argument("summary")
+    q.add_argument("--desc")
+    q.add_argument("--project", help="project key (default: [jira] default_project)")
+    q.add_argument("--type", help="issue type (default: [jira] issue_type)")
+    q.add_argument("--link", metavar="NAME", help="link it to a registered project")
+    q.add_argument("--unassigned", action="store_true", help="don't assign it to yourself")
+
+    p = sub.add_parser("set", help="edit registry fields")
+    p.add_argument("name")
+    p.add_argument("assignments", nargs="+", metavar="KEY=VALUE")
+    p.set_defaults(fn=cmd_set)
+
+    p = sub.add_parser("up", help="start a web instance")
+    p.add_argument("name")
+    p.set_defaults(fn=cmd_up)
+
+    p = sub.add_parser("down", help="stop a web instance")
+    p.add_argument("name")
+    p.set_defaults(fn=cmd_down)
+
+    p = sub.add_parser("url", help="print a project's URL")
+    p.add_argument("name")
+    p.set_defaults(fn=cmd_url)
+
+    args = ap.parse_args()
+    args.fn(args)
+
+
+if __name__ == "__main__":
+    main()

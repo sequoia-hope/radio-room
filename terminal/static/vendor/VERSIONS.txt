@@ -1,0 +1,11 @@
+Vendored from npm (no CDN: the page must load with no internet past the tailnet).
+Each package is MIT licensed; LICENSE-xterm.txt carries the notice.
+Refresh with:  npm pack @xterm/xterm @xterm/addon-fit @xterm/addon-webgl \
+                        @xterm/addon-unicode11 @xterm/addon-web-links
+then copy lib/*.js and css/xterm.css here.
+
+@xterm/xterm              6.0.0
+@xterm/addon-fit          0.11.0
+@xterm/addon-webgl        0.19.0
+@xterm/addon-unicode11    0.9.0
+@xterm/addon-web-links    0.12.0
