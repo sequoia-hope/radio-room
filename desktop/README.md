@@ -137,7 +137,7 @@ GTK 3, VTE 2.91 and WebKit2 4.1, because those are the bindings installed
 here; GTK 4 would want `gir1.2-vte-3.91` and `gir1.2-webkit-6.0`.
 
 `net.radioroom.Desktop.desktop` puts it in the app grid, and the icon in
-`icons/` gives it (and the dock) its eye-on-a-terminal. Both are named for
+`icons/` gives it (and the dock) its prompt-on-the-air. Both are named for
 the application id, which is how GNOME on Wayland ties the running window to
 its launcher:
 
