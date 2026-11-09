@@ -551,7 +551,7 @@ class BindPolicy(unittest.TestCase):
 
     def test_a_token_or_an_explicit_opt_out_allows_it(self):
         self.assertEqual(self.addrs(bind="any", token="s3cret"), ["0.0.0.0"])
-        self.assertEqual(self.addrs(bind="192.168.1.20", allow_no_token=True), ["192.168.1.20"])
+        self.assertEqual(self.addrs(bind="10.0.0.20", allow_no_token=True), ["10.0.0.20"])
 
     def test_the_mcp_callback_stays_on_loopback(self):
         with mock.patch.object(server, "BIND_ADDRS", ["127.0.0.1", self.TS]), \
@@ -620,8 +620,8 @@ class HTTP(unittest.TestCase):
     def test_plain_http_page_loads_from_the_lan_are_sent_to_https(self):
         with mock.patch.object(server, "HTTPS_READY", True), \
                 mock.patch.object(server, "HTTPS_PORT", 8443):
-            code, headers, _ = self.call("GET", "/?x=1", {"Host": "192.168.1.5:8000"})
-            self.assertEqual((code, headers["Location"]), (307, "https://192.168.1.5:8443/?x=1"))
+            code, headers, _ = self.call("GET", "/?x=1", {"Host": "10.0.0.5:8000"})
+            self.assertEqual((code, headers["Location"]), (307, "https://10.0.0.5:8443/?x=1"))
             code, headers, _ = self.call("POST", "/api/nope", {"Host": "[fd00::2]:8000"})
             self.assertEqual(code, 404)   # /api is never bounced
             code, headers, _ = self.call("GET", "/", {"Host": "[fd00::2]:8000"})

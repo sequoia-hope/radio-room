@@ -253,7 +253,7 @@ class Bind(unittest.TestCase):
     def test_any_and_lan_addresses_count_as_exposed(self):
         ts = lambda: self.TS  # noqa: E731
         self.assertEqual(listen.exposed(self.addrs("any"), tailscale_ip=ts), ["0.0.0.0"])
-        self.assertEqual(listen.exposed(["192.168.1.20"], tailscale_ip=ts), ["192.168.1.20"])
+        self.assertEqual(listen.exposed(["10.0.0.20"], tailscale_ip=ts), ["10.0.0.20"])
         self.assertEqual(listen.exposed(["::1", "127.0.0.1"], tailscale_ip=ts), [])
 
 
